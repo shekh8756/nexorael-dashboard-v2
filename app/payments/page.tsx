@@ -5,25 +5,15 @@ import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
 
 export default function PaymentsPage() {
-  const router = useRouter();
+const router = useRouter();
 
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("");
-  const [availableBalance, setAvailableBalance] = useState(0);
-const [pendingBalance, setPendingBalance] = useState(0);
+const [amount, setAmount] = useState("");
+const [method, setMethod] = useState("");
 
-const [paypalEmail, setPaypalEmail] = useState("");
-const [paypalName, setPaypalName] = useState("");
+const [withdrawals, setWithdrawals] = useState<any[]>([]);
+const [loading, setLoading] = useState(true);
 
-const [bankName, setBankName] = useState("");
-const [bankIfsc, setBankIfsc] = useState("");
-const [bankSwift, setBankSwift] = useState("");
-const [bankAccountNumber, setBankAccountNumber] = useState("");
-const [bankAddress, setBankAddress] = useState("");
-const [bankingName, setBankingName] = useState("");
-  const [withdrawals, setWithdrawals] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [availableBalance, setAvailableBalance] = useState(0);
+const [availableBalance, setAvailableBalance] = useState(0);
 const [pendingBalance, setPendingBalance] = useState(0);
 
 const [paypalEmail, setPaypalEmail] = useState("");
