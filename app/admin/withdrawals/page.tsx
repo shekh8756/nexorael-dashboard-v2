@@ -49,9 +49,19 @@ export default function AdminWithdrawalsPage() {
 
   async function loadWithdrawals(profileParam = adminProfile) {
     let query = supabase
-      .from("withdrawals")
-      .select("*")
-      .order("created_at", { ascending: false });
+  .from("withdrawals")
+  .select(`
+    *,
+    paypal_name,
+    paypal_email,
+    bank_name,
+    bank_ifsc,
+    bank_swift,
+    bank_account_no,
+    bank_address,
+    banking_name
+  `)
+  .order("created_at", { ascending: false });
 
     const { data: withdrawalsData, error } = await query;
 
@@ -114,7 +124,7 @@ export default function AdminWithdrawalsPage() {
       await supabase.from("notifications").insert({
         user_id: withdrawal.user_id,
         title: "Withdrawal updated",
-        message: `Your withdrawal request of $${withdrawal.amount} is now ${status}.`,
+        message: `Your withdrawal request of $${withdrawal.amount} has been ${status}.`,
         type: "withdrawal",
         is_read: false,
       });
@@ -156,6 +166,7 @@ export default function AdminWithdrawalsPage() {
                 <th align="left" style={thStyle}>White Label</th>
                 <th align="left" style={thStyle}>Amount</th>
                 <th align="left" style={thStyle}>Method</th>
+                <th align="left" style={thStyle}>Payment Details</th>
                 <th align="left" style={thStyle}>Status</th>
                 <th align="left" style={thStyle}>Date</th>
                 <th align="left" style={thStyle}>Admin Note</th>
@@ -171,6 +182,23 @@ export default function AdminWithdrawalsPage() {
                   <td style={tdStyle}>{item.white_label_name}</td>
                   <td style={tdStyle}>${Number(item.amount || 0).toFixed(2)}</td>
                   <td style={tdStyle}>{item.method || "-"}</td>
+                  <td style={tdStyle}>
+  {item.method === "paypal" ? (
+    <>
+      <div>Name: {item.paypal_name}</div>
+      <div>Email: {item.paypal_email}</div>
+    </>
+  ) : (
+    <>
+      <div>Bank: {item.bank_name}</div>
+      <div>IFSC: {item.bank_ifsc}</div>
+      <div>SWIFT: {item.bank_swift}</div>
+      <div>Acc No: {item.bank_account_no}</div>
+      <div>Address: {item.bank_address}</div>
+      <div>Name: {item.banking_name}</div>
+    </>
+  )}
+</td>
                   <td style={tdStyle}>
                     <span style={statusStyle}>{item.status}</span>
                   </td>

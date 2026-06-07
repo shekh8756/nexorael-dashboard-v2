@@ -9,8 +9,32 @@ export default function PaymentsPage() {
 
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("");
+  const [availableBalance, setAvailableBalance] = useState(0);
+const [pendingBalance, setPendingBalance] = useState(0);
+
+const [paypalEmail, setPaypalEmail] = useState("");
+const [paypalName, setPaypalName] = useState("");
+
+const [bankName, setBankName] = useState("");
+const [bankIfsc, setBankIfsc] = useState("");
+const [bankSwift, setBankSwift] = useState("");
+const [bankAccountNumber, setBankAccountNumber] = useState("");
+const [bankAddress, setBankAddress] = useState("");
+const [bankingName, setBankingName] = useState("");
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [availableBalance, setAvailableBalance] = useState(0);
+const [pendingBalance, setPendingBalance] = useState(0);
+
+const [paypalEmail, setPaypalEmail] = useState("");
+const [paypalName, setPaypalName] = useState("");
+
+const [bankName, setBankName] = useState("");
+const [bankIfsc, setBankIfsc] = useState("");
+const [bankSwift, setBankSwift] = useState("");
+const [bankAccount, setBankAccount] = useState("");
+const [bankAddress, setBankAddress] = useState("");
+const [bankHolder, setBankHolder] = useState("");
 
   useEffect(() => {
     loadWithdrawals();
@@ -35,7 +59,32 @@ export default function PaymentsPage() {
       setLoading(false);
       return;
     }
+const { data: royalties } = await supabase
+  .from("royalties")
+  .select("earnings")
+  .eq("user_id", userData.user.id);
 
+const totalRevenue =
+  royalties?.reduce(
+    (sum, row) => sum + Number(row.earnings || 0),
+    0
+  ) || 0;
+
+const pendingAmount =
+  (data || [])
+    .filter((x) => x.status === "pending")
+    .reduce(
+      (sum, row) => sum + Number(row.amount || 0),
+      0
+    );
+
+setAvailableBalance(
+  Number((totalRevenue - pendingAmount).toFixed(2))
+);
+
+setPendingBalance(
+  Number(pendingAmount.toFixed(2))
+);
     setWithdrawals(data || []);
     setLoading(false);
   }
@@ -49,23 +98,102 @@ export default function PaymentsPage() {
       router.push("/login");
       return;
     }
+const requestAmount = Number(amount);
 
-    const { error } = await supabase.from("withdrawals").insert({
-      user_id: userData.user.id,
-      amount: Number(amount),
-      method,
-      status: "pending",
-    });
+if (requestAmount <= 0) {
+  alert("Invalid amount");
+  return;
+}
+
+if (requestAmount > availableBalance) {
+  alert(
+    `Maximum withdrawal allowed is $${availableBalance}`
+  );
+  return;
+}
+const { error } = await supabase
+  .from("withdrawals")
+  .insert({
+    user_id: userData.user.id,
+
+    amount: Number(amount),
+
+    method,
+
+    status: "pending",
+
+    paypal_name:
+      method === "paypal"
+        ? paypalName
+        : null,
+
+    paypal_email:
+      method === "paypal"
+        ? paypalEmail
+        : null,
+
+    bank_name:
+      method === "bank"
+        ? bankName
+        : null,
+
+    bank_ifsc:
+      method === "bank"
+        ? bankIfsc
+        : null,
+
+    bank_swift:
+      method === "bank"
+        ? bankSwift
+        : null,
+
+    bank_account:
+      method === "bank"
+        ? bankAccount
+        : null,
+
+    bank_address:
+      method === "bank"
+        ? bankAddress
+        : null,
+
+    bank_holder:
+      method === "bank"
+        ? bankHolder
+        : null,
+  });
 
     if (error) {
-      alert(error.message);
-      return;
-    }
+  alert(error.message);
+  return;
+}
 
-    alert("Withdrawal request submitted.");
-    setAmount("");
-    setMethod("");
-    loadWithdrawals();
+await supabase
+  .from("notifications")
+  .insert({
+    user_id: userData.user.id,
+    title: "Withdrawal Request",
+    message: `Withdrawal request submitted for $${amount}`,
+    type: "withdrawal",
+    is_read: false,
+  });
+
+alert("Withdrawal request submitted.");
+
+setAmount("");
+setMethod("");
+
+setPaypalName("");
+setPaypalEmail("");
+
+setBankName("");
+setBankIfsc("");
+setBankSwift("");
+setBankAccount("");
+setBankAddress("");
+setBankHolder("");
+
+loadWithdrawals();
   }
 
   return (
@@ -94,12 +222,12 @@ export default function PaymentsPage() {
       <section style={summaryBox}>
         <div>
           <p style={{ color: "#94A3B8" }}>Available Balance</p>
-          <h2>$0.00</h2>
+          <h2>${availableBalance.toFixed(2)}</h2>
         </div>
 
         <div>
           <p style={{ color: "#94A3B8" }}>Pending Withdrawal</p>
-          <h2>$0.00</h2>
+          <h2>${pendingBalance.toFixed(2)}</h2>
         </div>
       </section>
 
@@ -115,14 +243,93 @@ export default function PaymentsPage() {
           style={inputStyle}
         />
 
-        <label>Payment Method</label>
-        <input
-          required
-          value={method}
-          onChange={(e) => setMethod(e.target.value)}
-          placeholder="Bank, PayPal, Wise, UPI"
-          style={inputStyle}
-        />
+<label>Payment Method</label>
+
+<select
+  value={method}
+  onChange={(e) => setMethod(e.target.value)}
+  style={inputStyle}
+  required
+>
+  <option value="">Select Method</option>
+  <option value="paypal">PayPal</option>
+  <option value="bank">Bank Transfer</option>
+</select>
+
+{method === "paypal" && (
+  <>
+    <label>PayPal Name</label>
+
+    <input
+      value={paypalName}
+      onChange={(e) => setPaypalName(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>PayPal Email</label>
+
+    <input
+      type="email"
+      value={paypalEmail}
+      onChange={(e) => setPaypalEmail(e.target.value)}
+      style={inputStyle}
+      required
+    />
+  </>
+)}
+
+{method === "bank" && (
+  <>
+    <label>Bank Name</label>
+    <input
+      value={bankName}
+      onChange={(e) => setBankName(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>Bank Account Number</label>
+    <input
+      value={bankAccount}
+      onChange={(e) => setBankAccount(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>IFSC Code</label>
+    <input
+      value={bankIfsc}
+      onChange={(e) => setBankIfsc(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>SWIFT Code</label>
+    <input
+      value={bankSwift}
+      onChange={(e) => setBankSwift(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>Bank Address</label>
+    <input
+      value={bankAddress}
+      onChange={(e) => setBankAddress(e.target.value)}
+      style={inputStyle}
+      required
+    />
+
+    <label>Account Holder Name</label>
+    <input
+      value={bankHolder}
+      onChange={(e) => setBankHolder(e.target.value)}
+      style={inputStyle}
+      required
+    />
+  </>
+)}
 
         <button style={buttonStyle}>Submit Request</button>
       </form>
@@ -139,6 +346,20 @@ export default function PaymentsPage() {
             <div key={item.id} style={itemBox}>
               <p>Amount: ${item.amount}</p>
               <p>Method: {item.method}</p>
+              {item.method === "paypal" && (
+  <>
+    <p>Name: {item.paypal_name}</p>
+    <p>Email: {item.paypal_email}</p>
+  </>
+)}
+{item.method === "bank" && (
+  <>
+    <p>Bank: {item.bank_name}</p>
+    <p>Account: {item.bank_account}</p>
+    <p>IFSC: {item.bank_ifsc}</p>
+    <p>SWIFT: {item.bank_swift}</p>
+  </>
+)}
               <span style={statusStyle}>{item.status}</span>
             </div>
           ))
