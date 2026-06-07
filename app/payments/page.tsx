@@ -51,12 +51,12 @@ const [bankHolder, setBankHolder] = useState("");
     }
 const { data: royalties } = await supabase
   .from("royalties")
-  .select("earnings")
+  .select("revenue")
   .eq("user_id", userData.user.id);
 
 const totalRevenue =
   royalties?.reduce(
-    (sum, row) => sum + Number(row.earnings || 0),
+    (sum, row) => sum + Number(row.revenue || 0),
     0
   ) || 0;
 
