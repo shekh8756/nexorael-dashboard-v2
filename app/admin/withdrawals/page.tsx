@@ -54,7 +54,7 @@ let query = supabase
   .order("created_at", { ascending: false });
 
     const { data: withdrawalsData, error } = await query;
-
+console.log("withdrawalsData", withdrawalsData);
     if (error) {
       alert(error.message);
       setLoading(false);
