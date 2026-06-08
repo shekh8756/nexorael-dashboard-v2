@@ -27,6 +27,7 @@ export default function PaymentsPage() {
   const [bankAccount, setBankAccount] = useState("");
   const [bankAddress, setBankAddress] = useState("");
   const [bankHolder, setBankHolder] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
 
   useEffect(() => {
     loadWithdrawals();
@@ -84,7 +85,12 @@ export default function PaymentsPage() {
     }
 
     const requestAmount = Number(amount);
-
+if (availableBalance <= 0) {
+  setError(
+    "You do not have any available balance."
+  );
+  return;
+}
     // ❌ Amount validation
     if (!requestAmount || requestAmount <= 0) {
       setError("Enter valid amount");
@@ -126,6 +132,7 @@ export default function PaymentsPage() {
     }
 
     const { error } = await supabase.from("withdrawals").insert({
+      
       user_id: userData.user.id,
       amount: requestAmount,
       method,
@@ -137,9 +144,26 @@ export default function PaymentsPage() {
       bank_name: method === "bank" ? bankName : null,
       bank_ifsc: method === "bank" ? bankIfsc : null,
       bank_swift: method === "bank" ? bankSwift : null,
-      bank_account: method === "bank" ? bankAccount : null,
-      bank_address: method === "bank" ? bankAddress : null,
-      bank_holder: method === "bank" ? bankHolder : null,
+bank_account_number:
+  method === "bank"
+    ? bankAccount
+    : null,
+
+bank_address:
+  method === "bank"
+    ? bankAddress
+    : null,
+
+banking_name:
+  method === "bank"
+    ? bankHolder
+    : null,
+
+    payment_details:
+  method === "bank"
+    ? customerAddress
+    : null,
+
     });
 
     if (error) {
@@ -198,12 +222,21 @@ export default function PaymentsPage() {
         <h2>Request Withdrawal</h2>
 
         <label>Amount</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          style={inputStyle}
-        />
+<input
+  type="number"
+  min="0"
+  max={availableBalance}
+  step="0.01"
+  value={amount}
+  onChange={(e) => {
+    const value = Number(e.target.value);
+
+    if (value <= availableBalance) {
+      setAmount(e.target.value);
+    }
+  }}
+  style={inputStyle}
+/>
 
         <label>Payment Method</label>
         <select
@@ -269,16 +302,39 @@ export default function PaymentsPage() {
             />
             <input
               placeholder="Account Holder Name"
+              
               value={bankHolder}
               onChange={(e) => setBankHolder(e.target.value)}
               style={inputStyle}
             />
           </>
         )}
+<label>Customer Address *</label>
+
+<textarea
+  value={customerAddress}
+  onChange={(e) => setCustomerAddress(e.target.value)}
+  style={{
+    ...inputStyle,
+    minHeight: "90px",
+  }}
+  required
+/>
 
         {error && <p style={{ color: "red" }}>{error}</p>}
 
-        <button style={buttonStyle}>Submit Request</button>
+        <button
+  style={{
+    ...buttonStyle,
+    opacity: availableBalance <= 0 ? 0.5 : 1,
+    cursor: availableBalance <= 0 ? "not-allowed" : "pointer",
+  }}
+  disabled={availableBalance <= 0}
+>
+  {availableBalance <= 0
+    ? "No Balance Available"
+    : "Submit Request"}
+</button>
       </form>
 
       <section style={sectionStyle}>
