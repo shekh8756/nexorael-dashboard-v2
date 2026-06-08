@@ -64,6 +64,10 @@ console.log("withdrawalsData", withdrawalsData);
     const { data: profilesData } = await supabase
       .from("profiles")
       .select("id, full_name, email, white_label_id");
+      
+console.log("withdrawalsData", withdrawalsData);
+console.log("profilesData", profilesData);
+console.log("adminProfile", profileParam);
 
     const { data: whiteLabelsData } = await supabase
       .from("white_labels")
