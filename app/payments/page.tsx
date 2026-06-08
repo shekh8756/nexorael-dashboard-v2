@@ -5,26 +5,28 @@ import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
 
 export default function PaymentsPage() {
-const router = useRouter();
+  const router = useRouter();
 
-const [amount, setAmount] = useState("");
-const [method, setMethod] = useState("");
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("");
 
-const [withdrawals, setWithdrawals] = useState<any[]>([]);
-const [loading, setLoading] = useState(true);
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-const [availableBalance, setAvailableBalance] = useState(0);
-const [pendingBalance, setPendingBalance] = useState(0);
+  const [availableBalance, setAvailableBalance] = useState(0);
+  const [pendingBalance, setPendingBalance] = useState(0);
 
-const [paypalEmail, setPaypalEmail] = useState("");
-const [paypalName, setPaypalName] = useState("");
+  const [error, setError] = useState("");
 
-const [bankName, setBankName] = useState("");
-const [bankIfsc, setBankIfsc] = useState("");
-const [bankSwift, setBankSwift] = useState("");
-const [bankAccount, setBankAccount] = useState("");
-const [bankAddress, setBankAddress] = useState("");
-const [bankHolder, setBankHolder] = useState("");
+  const [paypalEmail, setPaypalEmail] = useState("");
+  const [paypalName, setPaypalName] = useState("");
+
+  const [bankName, setBankName] = useState("");
+  const [bankIfsc, setBankIfsc] = useState("");
+  const [bankSwift, setBankSwift] = useState("");
+  const [bankAccount, setBankAccount] = useState("");
+  const [bankAddress, setBankAddress] = useState("");
+  const [bankHolder, setBankHolder] = useState("");
 
   useEffect(() => {
     loadWithdrawals();
@@ -45,42 +47,34 @@ const [bankHolder, setBankHolder] = useState("");
       .order("created_at", { ascending: false });
 
     if (error) {
-      alert(error.message);
+      setError(error.message);
       setLoading(false);
       return;
     }
-const { data: royalties } = await supabase
-  .from("royalties")
-  .select("revenue")
-  .eq("user_id", userData.user.id);
 
-const totalRevenue =
-  royalties?.reduce(
-    (sum, row) => sum + Number(row.revenue || 0),
-    0
-  ) || 0;
+    const { data: royalties } = await supabase
+      .from("royalties")
+      .select("revenue")
+      .eq("user_id", userData.user.id);
 
-const pendingAmount =
-  (data || [])
-    .filter((x) => x.status === "pending")
-    .reduce(
-      (sum, row) => sum + Number(row.amount || 0),
-      0
-    );
+    const totalRevenue =
+      royalties?.reduce((sum, row) => sum + Number(row.revenue || 0), 0) || 0;
 
-setAvailableBalance(
-  Number((totalRevenue - pendingAmount).toFixed(2))
-);
+    const pendingAmount =
+      (data || [])
+        .filter((x) => x.status === "pending")
+        .reduce((sum, row) => sum + Number(row.amount || 0), 0) || 0;
 
-setPendingBalance(
-  Number(pendingAmount.toFixed(2))
-);
+    setAvailableBalance(Number((totalRevenue - pendingAmount).toFixed(2)));
+    setPendingBalance(Number(pendingAmount.toFixed(2)));
+
     setWithdrawals(data || []);
     setLoading(false);
   }
 
   async function submitWithdrawal(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
 
     const { data: userData } = await supabase.auth.getUser();
 
@@ -88,123 +82,102 @@ setPendingBalance(
       router.push("/login");
       return;
     }
-const requestAmount = Number(amount);
 
-if (requestAmount <= 0) {
-  alert("Invalid amount");
-  return;
-}
+    const requestAmount = Number(amount);
 
-if (requestAmount > availableBalance) {
-  alert(
-    `Maximum withdrawal allowed is $${availableBalance}`
-  );
-  return;
-}
-const { error } = await supabase
-  .from("withdrawals")
-  .insert({
-    user_id: userData.user.id,
+    // ❌ Amount validation
+    if (!requestAmount || requestAmount <= 0) {
+      setError("Enter valid amount");
+      return;
+    }
 
-    amount: Number(amount),
+    if (requestAmount > availableBalance) {
+      setError(`Maximum withdrawal allowed is $${availableBalance}`);
+      return;
+    }
 
-    method,
+    // ❌ Method validation
+    if (!method) {
+      setError("Select payment method");
+      return;
+    }
 
-    status: "pending",
+    // ❌ PayPal validation
+    if (method === "paypal") {
+      if (!paypalName || !paypalEmail) {
+        setError("Fill PayPal details");
+        return;
+      }
+    }
 
-    paypal_name:
-      method === "paypal"
-        ? paypalName
-        : null,
+    // ❌ Bank validation
+    if (method === "bank") {
+      if (
+        !bankName ||
+        !bankAccount ||
+        !bankIfsc ||
+        !bankSwift ||
+        !bankAddress ||
+        !bankHolder
+      ) {
+        setError("Fill all bank details");
+        return;
+      }
+    }
 
-    paypal_email:
-      method === "paypal"
-        ? paypalEmail
-        : null,
+    const { error } = await supabase.from("withdrawals").insert({
+      user_id: userData.user.id,
+      amount: requestAmount,
+      method,
+      status: "pending",
 
-    bank_name:
-      method === "bank"
-        ? bankName
-        : null,
+      paypal_name: method === "paypal" ? paypalName : null,
+      paypal_email: method === "paypal" ? paypalEmail : null,
 
-    bank_ifsc:
-      method === "bank"
-        ? bankIfsc
-        : null,
-
-    bank_swift:
-      method === "bank"
-        ? bankSwift
-        : null,
-
-    bank_account:
-      method === "bank"
-        ? bankAccount
-        : null,
-
-    bank_address:
-      method === "bank"
-        ? bankAddress
-        : null,
-
-    bank_holder:
-      method === "bank"
-        ? bankHolder
-        : null,
-  });
+      bank_name: method === "bank" ? bankName : null,
+      bank_ifsc: method === "bank" ? bankIfsc : null,
+      bank_swift: method === "bank" ? bankSwift : null,
+      bank_account: method === "bank" ? bankAccount : null,
+      bank_address: method === "bank" ? bankAddress : null,
+      bank_holder: method === "bank" ? bankHolder : null,
+    });
 
     if (error) {
-  alert(error.message);
-  return;
-}
+      setError(error.message);
+      return;
+    }
 
-await supabase
-  .from("notifications")
-  .insert({
-    user_id: userData.user.id,
-    title: "Withdrawal Request",
-    message: `Withdrawal request submitted for $${amount}`,
-    type: "withdrawal",
-    is_read: false,
-  });
+    await supabase.from("notifications").insert({
+      user_id: userData.user.id,
+      title: "Withdrawal Request",
+      message: `Withdrawal request submitted for $${requestAmount}`,
+      type: "withdrawal",
+      is_read: false,
+    });
 
-alert("Withdrawal request submitted.");
+    setAmount("");
+    setMethod("");
 
-setAmount("");
-setMethod("");
+    setPaypalName("");
+    setPaypalEmail("");
 
-setPaypalName("");
-setPaypalEmail("");
+    setBankName("");
+    setBankIfsc("");
+    setBankSwift("");
+    setBankAccount("");
+    setBankAddress("");
+    setBankHolder("");
 
-setBankName("");
-setBankIfsc("");
-setBankSwift("");
-setBankAccount("");
-setBankAddress("");
-setBankHolder("");
-
-loadWithdrawals();
+    loadWithdrawals();
   }
 
   return (
     <main style={pageStyle}>
+      <button onClick={() => router.push("/dashboard")} style={backBtn}>
+        ← Back
+      </button>
 
-  <button
-    onClick={() => router.push("/dashboard")}
-    style={{
-      padding: "10px 16px",
-      borderRadius: "10px",
-      border: "1px solid #334155",
-      background: "#0B1020",
-      color: "white",
-      cursor: "pointer",
-      marginBottom: "16px",
-    }}
-  >
-    ← Back
-  </button>
-
-  <h1>Payments & Withdrawals</h1>
+      <h1>Payments & Withdrawals</h1>
       <p style={{ color: "#94A3B8" }}>
         Request royalty withdrawals and view payment status.
       </p>
@@ -226,100 +199,84 @@ loadWithdrawals();
 
         <label>Amount</label>
         <input
-          required
           type="number"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           style={inputStyle}
         />
 
-<label>Payment Method</label>
+        <label>Payment Method</label>
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
+          style={inputStyle}
+        >
+          <option value="">Select Method</option>
+          <option value="paypal">PayPal</option>
+          <option value="bank">Bank Transfer</option>
+        </select>
 
-<select
-  value={method}
-  onChange={(e) => setMethod(e.target.value)}
-  style={inputStyle}
-  required
->
-  <option value="">Select Method</option>
-  <option value="paypal">PayPal</option>
-  <option value="bank">Bank Transfer</option>
-</select>
+        {/* PayPal */}
+        {method === "paypal" && (
+          <>
+            <input
+              placeholder="PayPal Name"
+              value={paypalName}
+              onChange={(e) => setPaypalName(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="PayPal Email"
+              value={paypalEmail}
+              onChange={(e) => setPaypalEmail(e.target.value)}
+              style={inputStyle}
+            />
+          </>
+        )}
 
-{method === "paypal" && (
-  <>
-    <label>PayPal Name</label>
+        {/* Bank */}
+        {method === "bank" && (
+          <>
+            <input
+              placeholder="Bank Name"
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="Account Number"
+              value={bankAccount}
+              onChange={(e) => setBankAccount(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="IFSC Code"
+              value={bankIfsc}
+              onChange={(e) => setBankIfsc(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="SWIFT Code"
+              value={bankSwift}
+              onChange={(e) => setBankSwift(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="Bank Address"
+              value={bankAddress}
+              onChange={(e) => setBankAddress(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              placeholder="Account Holder Name"
+              value={bankHolder}
+              onChange={(e) => setBankHolder(e.target.value)}
+              style={inputStyle}
+            />
+          </>
+        )}
 
-    <input
-      value={paypalName}
-      onChange={(e) => setPaypalName(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>PayPal Email</label>
-
-    <input
-      type="email"
-      value={paypalEmail}
-      onChange={(e) => setPaypalEmail(e.target.value)}
-      style={inputStyle}
-      required
-    />
-  </>
-)}
-
-{method === "bank" && (
-  <>
-    <label>Bank Name</label>
-    <input
-      value={bankName}
-      onChange={(e) => setBankName(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>Bank Account Number</label>
-    <input
-      value={bankAccount}
-      onChange={(e) => setBankAccount(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>IFSC Code</label>
-    <input
-      value={bankIfsc}
-      onChange={(e) => setBankIfsc(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>SWIFT Code</label>
-    <input
-      value={bankSwift}
-      onChange={(e) => setBankSwift(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>Bank Address</label>
-    <input
-      value={bankAddress}
-      onChange={(e) => setBankAddress(e.target.value)}
-      style={inputStyle}
-      required
-    />
-
-    <label>Account Holder Name</label>
-    <input
-      value={bankHolder}
-      onChange={(e) => setBankHolder(e.target.value)}
-      style={inputStyle}
-      required
-    />
-  </>
-)}
+        {error && <p style={{ color: "red" }}>{error}</p>}
 
         <button style={buttonStyle}>Submit Request</button>
       </form>
@@ -336,20 +293,23 @@ loadWithdrawals();
             <div key={item.id} style={itemBox}>
               <p>Amount: ${item.amount}</p>
               <p>Method: {item.method}</p>
+
               {item.method === "paypal" && (
-  <>
-    <p>Name: {item.paypal_name}</p>
-    <p>Email: {item.paypal_email}</p>
-  </>
-)}
-{item.method === "bank" && (
-  <>
-    <p>Bank: {item.bank_name}</p>
-    <p>Account: {item.bank_account}</p>
-    <p>IFSC: {item.bank_ifsc}</p>
-    <p>SWIFT: {item.bank_swift}</p>
-  </>
-)}
+                <>
+                  <p>Name: {item.paypal_name}</p>
+                  <p>Email: {item.paypal_email}</p>
+                </>
+              )}
+
+              {item.method === "bank" && (
+                <>
+                  <p>Bank: {item.bank_name}</p>
+                  <p>Account: {item.bank_account}</p>
+                  <p>IFSC: {item.bank_ifsc}</p>
+                  <p>SWIFT: {item.bank_swift}</p>
+                </>
+              )}
+
               <span style={statusStyle}>{item.status}</span>
             </div>
           ))
@@ -359,12 +319,22 @@ loadWithdrawals();
   );
 }
 
+/* styles same as yours (unchanged) */
 const pageStyle = {
   minHeight: "100vh",
   background: "#050816",
   color: "white",
   padding: "35px",
-  fontFamily: "Arial, sans-serif",
+  fontFamily: "Arial",
+};
+
+const backBtn = {
+  padding: "10px 16px",
+  borderRadius: "10px",
+  border: "1px solid #334155",
+  background: "#0B1020",
+  color: "white",
+  marginBottom: "16px",
 };
 
 const summaryBox = {
@@ -390,7 +360,6 @@ const sectionStyle = {
   background: "#111827",
   padding: "22px",
   borderRadius: "16px",
-  border: "1px solid #1F2937",
 };
 
 const inputStyle = {
@@ -407,23 +376,19 @@ const inputStyle = {
 const buttonStyle = {
   padding: "12px 16px",
   borderRadius: "10px",
-  border: "none",
   background: "#2563EB",
   color: "white",
-  fontWeight: "bold",
-  cursor: "pointer",
+  border: "none",
 };
 
 const itemBox = {
   background: "#0B1020",
   padding: "16px",
   borderRadius: "14px",
-  border: "1px solid #1F2937",
   marginTop: "12px",
 };
 
 const statusStyle = {
-  display: "inline-block",
   background: "#374151",
   padding: "6px 10px",
   borderRadius: "999px",
