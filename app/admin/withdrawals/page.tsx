@@ -57,7 +57,7 @@ export default function AdminWithdrawalsPage() {
     bank_name,
     bank_ifsc,
     bank_swift,
-    bank_account_no,
+    bank_account_number,
     bank_address,
     banking_name
   `)
@@ -193,7 +193,7 @@ export default function AdminWithdrawalsPage() {
       <div>Bank: {item.bank_name}</div>
       <div>IFSC: {item.bank_ifsc}</div>
       <div>SWIFT: {item.bank_swift}</div>
-      <div>Acc No: {item.bank_account_no}</div>
+      <div>Acc No: {item.bank_account_number}</div>
       <div>Address: {item.bank_address}</div>
       <div>Name: {item.banking_name}</div>
     </>
