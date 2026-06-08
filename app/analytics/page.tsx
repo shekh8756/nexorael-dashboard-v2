@@ -23,6 +23,17 @@ export default function AnalyticsPage() {
   const [topDSPs, setTopDSPs] = useState<any[]>([]);
   const [topCountries, setTopCountries] = useState<any[]>([]);
 
+const [topRelease, setTopRelease] = useState<{
+  name: string;
+  revenue: number;
+}>({
+  name: "-",
+  revenue: 0,
+});
+
+const [avgRevenuePerStream, setAvgRevenuePerStream] =
+  useState(0);
+
   useEffect(() => {
     loadAnalytics();
   }, []);
@@ -87,24 +98,32 @@ export default function AnalyticsPage() {
           0
         ) || 0;
 
-    const availableBalance =
-      totalRevenue - pendingWithdrawals;
+const availableBalance = Math.max(
+  0,
+  totalRevenue - pendingWithdrawals
+);
 
     const dspMap: any = {};
     const countryMap: any = {};
+    const releaseMap: any = {};
 
-    royalties?.forEach((item) => {
-      const dsp = item.dsp_name || "Unknown";
-      const country = item.country || "Unknown";
+royalties?.forEach((item) => {
+  const dsp = item.dsp_name || "Unknown";
+  const country = item.country || "Unknown";
+  const release = item.release_title || "Unknown";
 
-      dspMap[dsp] =
-        (dspMap[dsp] || 0) +
-        Number(item.revenue || 0);
+  dspMap[dsp] =
+    (dspMap[dsp] || 0) +
+    Number(item.revenue || 0);
 
-      countryMap[country] =
-        (countryMap[country] || 0) +
-        Number(item.revenue || 0);
-    });
+  countryMap[country] =
+    (countryMap[country] || 0) +
+    Number(item.revenue || 0);
+
+  releaseMap[release] =
+    (releaseMap[release] || 0) +
+    Number(item.revenue || 0);
+});
 
     setTopDSPs(
       Object.entries(dspMap)
@@ -131,7 +150,26 @@ export default function AnalyticsPage() {
         )
         .slice(0, 5)
     );
+const topReleaseData =
+  Object.entries(releaseMap)
+    .map(([name, revenue]) => ({
+      name,
+      revenue: Number(revenue),
+    }))
+    .sort(
+      (a: any, b: any) =>
+        b.revenue - a.revenue
+    )[0];
 
+if (topReleaseData) {
+  setTopRelease(topReleaseData);
+}
+
+setAvgRevenuePerStream(
+  totalStreams > 0
+    ? totalRevenue / totalStreams
+    : 0
+);
     setAnalytics({
       totalReleases,
       liveReleases,
@@ -290,6 +328,38 @@ export default function AnalyticsPage() {
           </div>
         ))}
       </section>
+
+      <div
+  style={{
+    ...gridStyle,
+    marginTop: "20px",
+  }}
+>
+  <section style={sectionStyle}>
+    <h2>Top Release</h2>
+
+    <div style={rowStyle}>
+      <span>{topRelease.name}</span>
+
+      <strong>
+        ${Number(topRelease.revenue).toFixed(2)}
+      </strong>
+    </div>
+  </section>
+
+  <section style={sectionStyle}>
+    <h2>Revenue Per Stream</h2>
+
+    <div style={rowStyle}>
+      <span>Average</span>
+
+      <strong>
+        ${avgRevenuePerStream.toFixed(6)}
+      </strong>
+    </div>
+  </section>
+</div>
+
     </main>
   );
 }
