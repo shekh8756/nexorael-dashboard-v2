@@ -8,11 +8,16 @@ export default function AnalyticsPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+
   const [analytics, setAnalytics] = useState({
     totalReleases: 0,
     liveReleases: 0,
     totalStreams: 0,
     totalRevenue: 0,
+    totalTracks: 0,
+    totalDSPs: 0,
+    availableBalance: 0,
+    pendingWithdrawals: 0,
   });
 
   const [topDSPs, setTopDSPs] = useState<any[]>([]);
@@ -20,7 +25,6 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     loadAnalytics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadAnalytics() {
@@ -31,15 +35,22 @@ export default function AnalyticsPage() {
       return;
     }
 
+    const userId = userData.user.id;
+
     const { data: releases } = await supabase
       .from("releases")
       .select("*")
-      .eq("user_id", userData.user.id);
+      .eq("user_id", userId);
 
     const { data: royalties } = await supabase
       .from("royalties")
       .select("*")
-      .eq("user_id", userData.user.id);
+      .eq("user_id", userId);
+
+    const { data: withdrawals } = await supabase
+      .from("withdrawals")
+      .select("amount,status")
+      .eq("user_id", userId);
 
     const totalReleases = releases?.length || 0;
 
@@ -58,6 +69,27 @@ export default function AnalyticsPage() {
         0
       ) || 0;
 
+    const totalTracks =
+      new Set(
+        royalties?.map((r) => r.release_title)
+      ).size || 0;
+
+    const totalDSPs =
+      new Set(
+        royalties?.map((r) => r.dsp_name)
+      ).size || 0;
+
+    const pendingWithdrawals =
+      withdrawals
+        ?.filter((x) => x.status === "pending")
+        .reduce(
+          (sum, x) => sum + Number(x.amount || 0),
+          0
+        ) || 0;
+
+    const availableBalance =
+      totalRevenue - pendingWithdrawals;
+
     const dspMap: any = {};
     const countryMap: any = {};
 
@@ -65,9 +97,13 @@ export default function AnalyticsPage() {
       const dsp = item.dsp_name || "Unknown";
       const country = item.country || "Unknown";
 
-      dspMap[dsp] = (dspMap[dsp] || 0) + Number(item.revenue || 0);
+      dspMap[dsp] =
+        (dspMap[dsp] || 0) +
+        Number(item.revenue || 0);
+
       countryMap[country] =
-        (countryMap[country] || 0) + Number(item.revenue || 0);
+        (countryMap[country] || 0) +
+        Number(item.revenue || 0);
     });
 
     setTopDSPs(
@@ -76,7 +112,10 @@ export default function AnalyticsPage() {
           name,
           revenue,
         }))
-        .sort((a: any, b: any) => b.revenue - a.revenue)
+        .sort(
+          (a: any, b: any) =>
+            b.revenue - a.revenue
+        )
         .slice(0, 5)
     );
 
@@ -86,7 +125,10 @@ export default function AnalyticsPage() {
           name,
           revenue,
         }))
-        .sort((a: any, b: any) => b.revenue - a.revenue)
+        .sort(
+          (a: any, b: any) =>
+            b.revenue - a.revenue
+        )
         .slice(0, 5)
     );
 
@@ -95,6 +137,10 @@ export default function AnalyticsPage() {
       liveReleases,
       totalStreams,
       totalRevenue,
+      totalTracks,
+      totalDSPs,
+      availableBalance,
+      pendingWithdrawals,
     });
 
     setLoading(false);
@@ -112,7 +158,8 @@ export default function AnalyticsPage() {
       <h1>Analytics</h1>
 
       <p style={{ color: "#94A3B8" }}>
-        Track your releases, streams, DSP performance and revenue.
+        Track your releases, streams,
+        DSP performance and revenue.
       </p>
 
       <div style={statsGrid}>
@@ -128,12 +175,40 @@ export default function AnalyticsPage() {
 
         <div style={cardStyle}>
           <p>Total Streams</p>
-          <h2>{analytics.totalStreams.toLocaleString()}</h2>
+          <h2>
+            {analytics.totalStreams.toLocaleString()}
+          </h2>
         </div>
 
         <div style={cardStyle}>
           <p>Total Revenue</p>
-          <h2>${analytics.totalRevenue.toFixed(2)}</h2>
+          <h2>
+            ${analytics.totalRevenue.toFixed(2)}
+          </h2>
+        </div>
+
+        <div style={cardStyle}>
+          <p>Total Tracks</p>
+          <h2>{analytics.totalTracks}</h2>
+        </div>
+
+        <div style={cardStyle}>
+          <p>DSP Partners</p>
+          <h2>{analytics.totalDSPs}</h2>
+        </div>
+
+        <div style={cardStyle}>
+          <p>Available Balance</p>
+          <h2>
+            ${analytics.availableBalance.toFixed(2)}
+          </h2>
+        </div>
+
+        <div style={cardStyle}>
+          <p>Pending Withdrawals</p>
+          <h2>
+            ${analytics.pendingWithdrawals.toFixed(2)}
+          </h2>
         </div>
       </div>
 
@@ -149,7 +224,12 @@ export default function AnalyticsPage() {
             topDSPs.map((dsp, index) => (
               <div key={index} style={rowStyle}>
                 <span>{dsp.name}</span>
-                <strong>${Number(dsp.revenue).toFixed(2)}</strong>
+                <strong>
+                  $
+                  {Number(
+                    dsp.revenue
+                  ).toFixed(2)}
+                </strong>
               </div>
             ))
           )}
@@ -163,15 +243,53 @@ export default function AnalyticsPage() {
           ) : topCountries.length === 0 ? (
             <p>No country data available.</p>
           ) : (
-            topCountries.map((country, index) => (
-              <div key={index} style={rowStyle}>
-                <span>{country.name}</span>
-                <strong>${Number(country.revenue).toFixed(2)}</strong>
-              </div>
-            ))
+            topCountries.map(
+              (country, index) => (
+                <div
+                  key={index}
+                  style={rowStyle}
+                >
+                  <span>{country.name}</span>
+                  <strong>
+                    $
+                    {Number(
+                      country.revenue
+                    ).toFixed(2)}
+                  </strong>
+                </div>
+              )
+            )
           )}
         </section>
       </div>
+
+      <section
+        style={{
+          ...sectionStyle,
+          marginTop: "20px",
+        }}
+      >
+        <h2>Platform Performance</h2>
+
+        {topDSPs.map((dsp, index) => (
+          <div key={index} style={rowStyle}>
+            <span>{dsp.name}</span>
+
+            <span>
+              {analytics.totalRevenue > 0
+                ? (
+                    (Number(
+                      dsp.revenue
+                    ) /
+                      analytics.totalRevenue) *
+                    100
+                  ).toFixed(1)
+                : "0"}
+              %
+            </span>
+          </div>
+        ))}
+      </section>
     </main>
   );
 }
@@ -196,7 +314,8 @@ const backButton = {
 
 const statsGrid = {
   display: "grid",
-  gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+  gridTemplateColumns:
+    "repeat(4,minmax(0,1fr))",
   gap: "16px",
   marginTop: "25px",
 };
