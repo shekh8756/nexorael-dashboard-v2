@@ -22,6 +22,8 @@ export default function AnalyticsPage() {
 
   const [topDSPs, setTopDSPs] = useState<any[]>([]);
   const [topCountries, setTopCountries] = useState<any[]>([]);
+  const [monthlyRevenue, setMonthlyRevenue] = useState<any[]>([]);
+  const [monthlyStreams, setMonthlyStreams] = useState<any[]>([]);
 
 const [topRelease, setTopRelease] = useState<{
   name: string;
@@ -106,6 +108,8 @@ const availableBalance = Math.max(
     const dspMap: any = {};
     const countryMap: any = {};
     const releaseMap: any = {};
+    const revenueMonthMap: any = {};
+    const streamMonthMap: any = {};
 
 royalties?.forEach((item) => {
   const dsp = item.dsp_name || "Unknown";
@@ -123,6 +127,16 @@ royalties?.forEach((item) => {
   releaseMap[release] =
     (releaseMap[release] || 0) +
     Number(item.revenue || 0);
+
+    const month = item.report_month || "Unknown";
+
+revenueMonthMap[month] =
+  (revenueMonthMap[month] || 0) +
+  Number(item.revenue || 0);
+
+streamMonthMap[month] =
+  (streamMonthMap[month] || 0) +
+  Number(item.streams || 0);
 });
 
     setTopDSPs(
@@ -169,6 +183,22 @@ setAvgRevenuePerStream(
   totalStreams > 0
     ? totalRevenue / totalStreams
     : 0
+);
+
+setMonthlyRevenue(
+  Object.entries(revenueMonthMap)
+    .map(([month, revenue]) => ({
+      month,
+      revenue,
+    }))
+);
+
+setMonthlyStreams(
+  Object.entries(streamMonthMap)
+    .map(([month, streams]) => ({
+      month,
+      streams,
+    }))
 );
     setAnalytics({
       totalReleases,
@@ -328,6 +358,42 @@ setAvgRevenuePerStream(
           </div>
         ))}
       </section>
+<section
+  style={{
+    ...sectionStyle,
+    marginTop: "20px",
+  }}
+>
+  <h2>Monthly Revenue</h2>
+
+  {monthlyRevenue.map((item, index) => (
+    <div key={index} style={rowStyle}>
+      <span>{item.month}</span>
+
+      <strong>
+        ${Number(item.revenue).toFixed(2)}
+      </strong>
+    </div>
+  ))}
+</section>
+<section
+  style={{
+    ...sectionStyle,
+    marginTop: "20px",
+  }}
+>
+  <h2>Monthly Streams</h2>
+
+  {monthlyStreams.map((item, index) => (
+    <div key={index} style={rowStyle}>
+      <span>{item.month}</span>
+
+      <strong>
+        {Number(item.streams).toLocaleString()}
+      </strong>
+    </div>
+  ))}
+</section>
 
       <div
   style={{
