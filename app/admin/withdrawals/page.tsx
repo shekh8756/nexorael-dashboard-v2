@@ -130,7 +130,7 @@ let query = supabase
         ← Back to Dashboard
       </button>
 
-      <h1>Admin Withdrawals</h1>
+      <h1>Admin Withdrawals V2 TEST</h1>
 
       <p style={{ color: "#94A3B8" }}>
         Review, approve, reject and mark royalty withdrawal requests as paid.
