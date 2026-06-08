@@ -3,6 +3,17 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  BarChart,
+  Bar,
+} from "recharts";
 
 export default function AnalyticsPage() {
   const router = useRouter();
@@ -24,6 +35,7 @@ export default function AnalyticsPage() {
   const [topCountries, setTopCountries] = useState<any[]>([]);
   const [monthlyRevenue, setMonthlyRevenue] = useState<any[]>([]);
   const [monthlyStreams, setMonthlyStreams] = useState<any[]>([]);
+  const [topTracks, setTopTracks] = useState<any[]>([]);
 
 const [topRelease, setTopRelease] = useState<{
   name: string;
@@ -114,6 +126,7 @@ const availableBalance = Math.max(
     const releaseStreamMap: any = {};
     const revenueMonthMap: any = {};
     const streamMonthMap: any = {};
+    const trackMap: any = {};
 
 royalties?.forEach((item) => {
   const dsp = item.dsp_name || "Unknown";
@@ -132,6 +145,15 @@ royalties?.forEach((item) => {
     (releaseMap[release] || 0) +
     Number(item.revenue || 0);
 releaseStreamMap[release] =
+trackMap[release] = {
+  revenue:
+    (trackMap[release]?.revenue || 0) +
+    Number(item.revenue || 0),
+
+  streams:
+    (trackMap[release]?.streams || 0) +
+    Number(item.streams || 0),
+};
   (releaseStreamMap[release] || 0) +
   Number(item.streams || 0);
 
@@ -214,6 +236,21 @@ setMonthlyStreams(
       streams,
     }))
 );
+
+setTopTracks(
+  Object.entries(trackMap)
+    .map(([name, data]: any) => ({
+      name,
+      revenue: data.revenue,
+      streams: data.streams,
+    }))
+    .sort(
+      (a: any, b: any) =>
+        b.revenue - a.revenue
+    )
+    .slice(0, 10)
+);
+
     setAnalytics({
       totalReleases,
       liveReleases,
@@ -319,6 +356,7 @@ setMonthlyStreams(
 
         <section style={sectionStyle}>
           <h2>Top Countries</h2>
+          <h2>DSP Revenue Share</h2>
 
           {loading ? (
             <p>Loading...</p>
@@ -397,22 +435,8 @@ setMonthlyStreams(
         }}
       />
     </div>
-            <span>{dsp.name}</span>
-
-            <span>
-              {analytics.totalRevenue > 0
-                ? (
-                    (Number(
-                      dsp.revenue
-                    ) /
-                      analytics.totalRevenue) *
-                    100
-                  ).toFixed(1)
-                : "0"}
-              %
-            </span>
-          </div>
-        ))}
+  </div>
+))}
 
 
         
@@ -423,17 +447,23 @@ setMonthlyStreams(
     marginTop: "20px",
   }}
 >
-  <h2>Monthly Revenue</h2>
+<h2>Monthly Revenue</h2>
 
-  {monthlyRevenue.map((item, index) => (
-    <div key={index} style={rowStyle}>
-      <span>{item.month}</span>
+<div style={{ width: "100%", height: 300 }}>
+  <ResponsiveContainer>
+    <LineChart data={monthlyRevenue}>
+      <CartesianGrid strokeDasharray="3 3" />
+      <XAxis dataKey="month" />
+      <YAxis />
+      <Tooltip />
+      <Line
+        type="monotone"
+        dataKey="revenue"
+      />
+    </LineChart>
+  </ResponsiveContainer>
+</div>
 
-      <strong>
-        ${Number(item.revenue).toFixed(2)}
-      </strong>
-    </div>
-  ))}
 </section>
 <section
   style={{
@@ -441,17 +471,20 @@ setMonthlyStreams(
     marginTop: "20px",
   }}
 >
-  <h2>Monthly Streams</h2>
+<h2>Monthly Streams</h2>
 
-  {monthlyStreams.map((item, index) => (
-    <div key={index} style={rowStyle}>
-      <span>{item.month}</span>
+<div style={{ width: "100%", height: 300 }}>
+  <ResponsiveContainer>
+    <BarChart data={monthlyStreams}>
+      <CartesianGrid strokeDasharray="3 3" />
+      <XAxis dataKey="month" />
+      <YAxis />
+      <Tooltip />
+      <Bar dataKey="streams" />
+    </BarChart>
+  </ResponsiveContainer>
+</div>
 
-      <strong>
-        {Number(item.streams).toLocaleString()}
-      </strong>
-    </div>
-  ))}
 </section>
 
       <div
