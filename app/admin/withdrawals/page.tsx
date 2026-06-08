@@ -48,19 +48,9 @@ export default function AdminWithdrawalsPage() {
   }
 
   async function loadWithdrawals(profileParam = adminProfile) {
-    let query = supabase
+let query = supabase
   .from("withdrawals")
-  .select(`
-    *,
-    paypal_name,
-    paypal_email,
-    bank_name,
-    bank_ifsc,
-    bank_swift,
-    bank_account_number,
-    bank_address,
-    banking_name
-  `)
+  .select("*")
   .order("created_at", { ascending: false });
 
     const { data: withdrawalsData, error } = await query;
