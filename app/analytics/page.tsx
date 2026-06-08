@@ -33,6 +33,9 @@ const [topRelease, setTopRelease] = useState<{
   revenue: 0,
 });
 
+const [bestTrackStreams, setBestTrackStreams] =
+  useState(0);
+
 const [avgRevenuePerStream, setAvgRevenuePerStream] =
   useState(0);
 
@@ -108,6 +111,7 @@ const availableBalance = Math.max(
     const dspMap: any = {};
     const countryMap: any = {};
     const releaseMap: any = {};
+    const releaseStreamMap: any = {};
     const revenueMonthMap: any = {};
     const streamMonthMap: any = {};
 
@@ -127,6 +131,9 @@ royalties?.forEach((item) => {
   releaseMap[release] =
     (releaseMap[release] || 0) +
     Number(item.revenue || 0);
+releaseStreamMap[release] =
+  (releaseStreamMap[release] || 0) +
+  Number(item.streams || 0);
 
     const month = item.report_month || "Unknown";
 
@@ -177,8 +184,13 @@ const topReleaseData =
 
 if (topReleaseData) {
   setTopRelease(topReleaseData);
-}
 
+  setBestTrackStreams(
+    Number(
+      releaseStreamMap[topReleaseData.name] || 0
+    )
+  );
+}
 setAvgRevenuePerStream(
   totalStreams > 0
     ? totalRevenue / totalStreams
@@ -187,6 +199,7 @@ setAvgRevenuePerStream(
 
 setMonthlyRevenue(
   Object.entries(revenueMonthMap)
+    .sort()
     .map(([month, revenue]) => ({
       month,
       revenue,
@@ -195,6 +208,7 @@ setMonthlyRevenue(
 
 setMonthlyStreams(
   Object.entries(streamMonthMap)
+    .sort()
     .map(([month, streams]) => ({
       month,
       streams,
@@ -339,8 +353,50 @@ setMonthlyStreams(
       >
         <h2>Platform Performance</h2>
 
-        {topDSPs.map((dsp, index) => (
-          <div key={index} style={rowStyle}>
+{topDSPs.map((dsp, index) => (
+  <div key={index}>
+    <div style={rowStyle}>
+      <span>{dsp.name}</span>
+
+      <span>
+        {analytics.totalRevenue > 0
+          ? (
+              (Number(dsp.revenue) /
+                analytics.totalRevenue) *
+              100
+            ).toFixed(1)
+          : "0"}
+        %
+      </span>
+    </div>
+
+    <div
+      style={{
+        width: "100%",
+        height: "8px",
+        background: "#1F2937",
+        borderRadius: "999px",
+        marginTop: "6px",
+        marginBottom: "12px",
+      }}
+    >
+      <div
+        style={{
+          width: `${
+            analytics.totalRevenue > 0
+              ? (
+                  (Number(dsp.revenue) /
+                    analytics.totalRevenue) *
+                  100
+                ).toFixed(1)
+              : 0
+          }%`,
+          height: "100%",
+          background: "#2563EB",
+          borderRadius: "999px",
+        }}
+      />
+    </div>
             <span>{dsp.name}</span>
 
             <span>
@@ -357,6 +413,9 @@ setMonthlyStreams(
             </span>
           </div>
         ))}
+
+
+        
       </section>
 <section
   style={{
@@ -411,6 +470,11 @@ setMonthlyStreams(
         ${Number(topRelease.revenue).toFixed(2)}
       </strong>
     </div>
+
+<div style={{ marginTop: "10px" }}>
+  Streams: {bestTrackStreams.toLocaleString()}
+</div>
+
   </section>
 
   <section style={sectionStyle}>
