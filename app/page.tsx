@@ -31,51 +31,17 @@ export default function Home() {
       return;
     }
 
-    async function finishOAuth() {
-      try {
-        setStatus("connecting");
-        setMessage("Connecting to Too Lost...");
+    setStatus("connecting");
+    setMessage("Connecting to Too Lost...");
 
-        const response = await fetch("/api/toolost/callback", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            code,
-            state,
-          }),
-        });
+    // Send the OAuth callback to the server.
+    // The callback route is GET because Too Lost redirects
+    // the browser back to this page with ?code=...&state=...
+    const callbackUrl = `/api/toolost/callback?code=${encodeURIComponent(
+      code
+    )}&state=${encodeURIComponent(state)}`;
 
-        const data = await response.json();
-
-        if (!response.ok || !data.success) {
-          throw new Error(
-            data?.error?.message ||
-              data?.error ||
-              "Too Lost connection failed"
-          );
-        }
-
-        setStatus("success");
-        setMessage("Too Lost connected successfully!");
-
-        window.history.replaceState({}, "", "/");
-      } catch (error) {
-        console.error(error);
-
-        setStatus("error");
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Too Lost connection failed"
-        );
-
-        window.history.replaceState({}, "", "/");
-      }
-    }
-
-    finishOAuth();
+    window.location.href = callbackUrl;
   }, []);
 
   function connectTooLost() {
