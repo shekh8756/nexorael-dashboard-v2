@@ -71,19 +71,21 @@ export default function TooLostTestPage() {
           }
         );
 
-      const releaseData =
-        await releaseResponse.json();
+      const releaseText =
+  await releaseResponse.text();
 
-      if (
-        !releaseResponse.ok ||
-        !releaseData.success
-      ) {
-        throw new Error(
-          JSON.stringify(
-            releaseData
-          )
-        );
-      }
+let releaseData: any;
+
+try {
+  releaseData = JSON.parse(releaseText);
+} catch {
+  throw new Error(
+    `Release API returned non-JSON (${releaseResponse.status}): ${releaseText.substring(
+      0,
+      1000
+    )}`
+  );
+}
 
       const release =
         releaseData?.data?.data ??
@@ -128,19 +130,22 @@ export default function TooLostTestPage() {
           }
         );
 
-      const uploadUrlData =
-        await uploadUrlResponse.json();
+      const uploadUrlText =
+  await uploadUrlResponse.text();
 
-      if (
-        !uploadUrlResponse.ok ||
-        !uploadUrlData.success
-      ) {
-        throw new Error(
-          JSON.stringify(
-            uploadUrlData
-          )
-        );
-      }
+let uploadUrlData: any;
+
+try {
+  uploadUrlData =
+    JSON.parse(uploadUrlText);
+} catch {
+  throw new Error(
+    `Upload URL API returned non-JSON (${uploadUrlResponse.status}): ${uploadUrlText.substring(
+      0,
+      1000
+    )}`
+  );
+}
 
       const upload =
         uploadUrlData?.data
@@ -245,19 +250,22 @@ export default function TooLostTestPage() {
           }
         );
 
-      const finalizeData =
-        await finalizeResponse.json();
+      const finalizeText =
+  await finalizeResponse.text();
 
-      if (
-        !finalizeResponse.ok ||
-        !finalizeData.success
-      ) {
-        throw new Error(
-          JSON.stringify(
-            finalizeData
-          )
-        );
-      }
+let finalizeData: any;
+
+try {
+  finalizeData =
+    JSON.parse(finalizeText);
+} catch {
+  throw new Error(
+    `Finalize API returned non-JSON (${finalizeResponse.status}): ${finalizeText.substring(
+      0,
+      1000
+    )}`
+  );
+}
 
       setStatus(
         "Completed successfully."
