@@ -5,24 +5,90 @@ import { tooLostApi } from "@/lib/toolost";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+function findUploadData(value: any): {
+  uploadUrl?: string;
+  fileKey?: string;
+  method?: string;
+  headers?: Record<string, string>;
+} {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const uploadUrl =
+    value.uploadUrl ??
+    value.upload_url ??
+    value.url ??
+    value.signedUrl ??
+    value.signed_url;
+
+  const fileKey =
+    value.fileKey ??
+    value.file_key ??
+    value.key;
+
+  if (uploadUrl || fileKey) {
+    return {
+      uploadUrl,
+      fileKey,
+      method:
+        value.method ??
+        value.httpMethod ??
+        value.http_method,
+      headers:
+        value.headers ??
+        value.uploadHeaders ??
+        value.upload_headers,
+    };
+  }
+
+  for (const key of [
+    "data",
+    "result",
+    "upload",
+    "file",
+    "payload",
+  ]) {
+    if (value[key]) {
+      const found = findUploadData(value[key]);
+
+      if (
+        found.uploadUrl ||
+        found.fileKey
+      ) {
+        return found;
+      }
+    }
+  }
+
+  return {};
+}
+
+export async function POST(
+  request: NextRequest
+) {
   try {
-    const cookieStore = await cookies();
+    const cookieStore =
+      await cookies();
 
     const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
+      cookieStore.get(
+        "toolost_access_token"
+      )?.value;
 
     if (!accessToken) {
       return NextResponse.json(
         {
           success: false,
-          error: "Too Lost is not connected",
+          error:
+            "Too Lost is not connected",
         },
         { status: 401 }
       );
     }
 
-    const body = await request.json();
+    const body =
+      await request.json();
 
     const {
       releaseId,
@@ -34,7 +100,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "releaseId is required",
+          error:
+            "releaseId is required",
         },
         { status: 400 }
       );
@@ -44,40 +111,101 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "fileName is required",
+          error:
+            "fileName is required",
         },
         { status: 400 }
       );
     }
 
-    const result = await tooLostApi(
-      accessToken,
-      `/releases/${releaseId}/tracks/upload-url`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          kind: "audio",
-          fileName,
-          contentType: contentType || "audio/wav",
-        }),
-      }
+    const result =
+      await tooLostApi(
+        accessToken,
+        `/releases/${releaseId}/tracks/upload-url`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
+          },
+          body: JSON.stringify({
+            kind: "audio",
+            fileName,
+            contentType:
+              contentType ||
+              "audio/wav",
+          }),
+        }
+      );
+
+    const upload =
+      findUploadData(
+        result.data
+      );
+
+    console.log(
+      "Too Lost upload URL status:",
+      result.response.status
     );
 
-    return NextResponse.json(
-      {
-        success: result.response.ok,
-        status: result.response.status,
-        data: result.data,
-      },
-      {
-        status: result.response.ok
-          ? 200
-          : result.response.status,
-      }
+    console.log(
+      "Too Lost upload URL raw response:",
+      result.data
     );
+
+    console.log(
+      "Too Lost normalized upload:",
+      upload
+    );
+
+    if (
+      !upload.uploadUrl ||
+      !upload.fileKey
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          step:
+            "create_upload_url",
+
+          status:
+            result.response.status,
+
+          error:
+            "Too Lost did not return a usable upload URL/file key.",
+
+          tooLostResponse:
+            result.data,
+        },
+        {
+          status: 502,
+        }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+
+      releaseId,
+
+      uploadUrl:
+        upload.uploadUrl,
+
+      fileKey:
+        upload.fileKey,
+
+      method:
+        upload.method ||
+        "PUT",
+
+      headers:
+        upload.headers || {},
+
+      raw:
+        result.data,
+    });
   } catch (error) {
     console.error(
       "Too Lost upload URL error:",
