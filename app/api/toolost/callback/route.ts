@@ -106,6 +106,9 @@ export async function GET(request: NextRequest) {
 
     const tokenText = await tokenResponse.text();
 
+    console.log("TOOLOST TOKEN STATUS:", tokenResponse.status);
+console.log("TOOLOST TOKEN RESPONSE:", tokenText);
+
     if (!tokenResponse.ok) {
       console.error("Too Lost token exchange failed:", tokenText);
 
@@ -146,8 +149,8 @@ export async function GET(request: NextRequest) {
     }
 
     const response = NextResponse.redirect(
-      new URL("/", request.url)
-    );
+  new URL("/?toolost=connected", request.url)
+);
 
     response.cookies.set(
       "toolost_access_token",
