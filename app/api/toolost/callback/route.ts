@@ -106,8 +106,10 @@ export async function GET(request: NextRequest) {
 
     const tokenText = await tokenResponse.text();
 
-    console.log("TOOLOST TOKEN STATUS:", tokenResponse.status);
-console.log("TOOLOST TOKEN RESPONSE:", tokenText);
+    console.log("=== TOOLOST TOKEN DEBUG ===");
+console.log("Token Status:", tokenResponse.status);
+console.log("Token Response:", tokenText);
+console.log("===========================");
 
     if (!tokenResponse.ok) {
       console.error("Too Lost token exchange failed:", tokenText);
