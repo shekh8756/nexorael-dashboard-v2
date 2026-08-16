@@ -12,6 +12,15 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
 
+    const toolostStatus = params.get("toolost");
+
+if (toolostStatus === "connected") {
+  setStatus("success");
+  setMessage("Too Lost connected successfully!");
+
+  window.history.replaceState({}, "", "/");
+  return;
+}
     const code = params.get("code");
     const state = params.get("state");
     const oauthError = params.get("error");
