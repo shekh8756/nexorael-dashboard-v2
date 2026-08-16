@@ -80,6 +80,13 @@ export async function GET(request: NextRequest) {
       codeVerifier
     );
 
+    console.log("=== TOOLOST TOKEN DEBUG ===");
+console.log("Token type:", tokenData.token_type);
+console.log("Token scope:", tokenData.scope);
+console.log("Expires in:", tokenData.expires_in);
+console.log("Has refresh token:", !!tokenData.refresh_token);
+console.log("===========================");
+
     // Save access token securely in HTTP-only cookie
     const response = NextResponse.redirect(
       new URL(

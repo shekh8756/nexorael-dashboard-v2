@@ -2,54 +2,77 @@
 
 import { useEffect, useState } from "react";
 
-export default function Home() {
-  const [status, setStatus] = useState<
-    "idle" | "connecting" | "success" | "error"
-  >("idle");
+type Status = "idle" | "connecting" | "success" | "error";
 
+export default function Home() {
+  const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
 
     const toolostStatus = params.get("toolost");
-    const error = params.get("error");
+    const code = params.get("code");
+    const state = params.get("state");
+    const oauthError = params.get("error");
     const errorDescription = params.get("error_description");
 
-    // Successful OAuth callback
+    // -----------------------------------------
+    // SUCCESS
+    // -----------------------------------------
     if (toolostStatus === "connected") {
       setStatus("success");
       setMessage("Too Lost connected successfully!");
 
-      // Remove query parameter from browser URL
       window.history.replaceState({}, "", "/");
       return;
     }
 
-    // OAuth provider returned an error
-    if (error) {
+    // -----------------------------------------
+    // OAUTH ERROR
+    // -----------------------------------------
+    if (oauthError) {
       setStatus("error");
       setMessage(
         errorDescription ||
-          `Too Lost authorization failed: ${error}`
+          `Too Lost authorization failed: ${oauthError}`
       );
 
       window.history.replaceState({}, "", "/");
       return;
     }
+
+    // -----------------------------------------
+    // TOO LOST SENT CODE + STATE
+    // -----------------------------------------
+    if (!code || !state) {
+      return;
+    }
+
+    setStatus("connecting");
+    setMessage("Connecting to Too Lost...");
+
+    // IMPORTANT:
+    // Do NOT use fetch here.
+    // Navigate the browser directly to the callback.
+    const callbackUrl =
+      `/api/toolost/callback?code=${encodeURIComponent(code)}` +
+      `&state=${encodeURIComponent(state)}`;
+
+    window.location.href = callbackUrl;
   }, []);
 
   function connectTooLost() {
     setStatus("connecting");
     setMessage("Opening Too Lost...");
 
-    // Start OAuth
     window.location.href = "/api/toolost/auth";
   }
 
   return (
     <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
       <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-zinc-900 p-8 text-center shadow-2xl">
+
         <h1 className="text-3xl font-bold mb-3">
           Nexorael Music
         </h1>
