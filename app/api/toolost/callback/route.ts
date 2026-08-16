@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const body = await request.json();
+    const { searchParams } = new URL(request.url);
 
-    const code = body.code;
-    const state = body.state;
+    const code = searchParams.get("code");
+    const state = searchParams.get("state");
+    const error = searchParams.get("error");
+
+    if (error) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Too Lost OAuth error: ${error}`,
+        },
+        { status: 400 }
+      );
+    }
 
     if (!code || !state) {
       return NextResponse.json(
@@ -17,13 +29,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const savedState =
-      request.cookies.get("toolost_oauth_state")?.value;
+    const cookieStore = await cookies();
 
+    const savedState = cookieStore.get("toolost_oauth_state")?.value;
     const codeVerifier =
-      request.cookies.get("toolost_code_verifier")?.value;
+      cookieStore.get("toolost_code_verifier")?.value;
 
-    if (!savedState || state !== savedState) {
+    if (!savedState) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "OAuth state cookie is missing",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (savedState !== state) {
       return NextResponse.json(
         {
           success: false,
@@ -37,7 +59,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "PKCE code verifier missing",
+          error: "PKCE code verifier is missing",
         },
         { status: 400 }
       );
@@ -47,23 +69,30 @@ export async function POST(request: NextRequest) {
     const clientSecret = process.env.TOOLOST_CLIENT_SECRET;
     const tokenUrl = process.env.TOOLOST_TOKEN_URL;
     const redirectUri = process.env.TOOLOST_REDIRECT_URI;
-    const apiUrl = process.env.TOOLOST_API_URL;
 
     if (
       !clientId ||
       !clientSecret ||
       !tokenUrl ||
-      !redirectUri ||
-      !apiUrl
+      !redirectUri
     ) {
       return NextResponse.json(
         {
           success: false,
-          error: "Too Lost environment variables are missing",
+          error: "Too Lost OAuth environment variables are missing",
         },
         { status: 500 }
       );
     }
+
+    const tokenBody = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      client_secret: clientSecret,
+      code_verifier: codeVerifier,
+    });
 
     const tokenResponse = await fetch(tokenUrl, {
       method: "POST",
@@ -71,26 +100,36 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        code,
-        code_verifier: codeVerifier,
-      }),
+      body: tokenBody.toString(),
+      cache: "no-store",
     });
 
-    const tokenData = await tokenResponse.json();
+    const tokenText = await tokenResponse.text();
 
     if (!tokenResponse.ok) {
+      console.error("Too Lost token exchange failed:", tokenText);
+
       return NextResponse.json(
         {
           success: false,
-          step: "token_exchange",
-          error: tokenData,
+          error: "Too Lost token exchange failed",
+          details: tokenText,
         },
-        { status: tokenResponse.status }
+        { status: 400 }
+      );
+    }
+
+    let tokenData: any;
+
+    try {
+      tokenData = JSON.parse(tokenText);
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid token response from Too Lost",
+        },
+        { status: 500 }
       );
     }
 
@@ -102,54 +141,32 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "Too Lost did not return an access token",
         },
-        { status: 500 }
+        { status: 400 }
       );
     }
 
-    // Test the authenticated Too Lost account
-    const meResponse = await fetch(`${apiUrl}/me`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
+    const response = NextResponse.redirect(
+      new URL("/", request.url)
+    );
 
-    const meData = await meResponse.json();
-
-    if (!meResponse.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          step: "profile_test",
-          error: meData,
-        },
-        { status: meResponse.status }
-      );
-    }
-
-    const response = NextResponse.json({
-      success: true,
-      message: "Too Lost connected successfully",
-      user: meData,
-    });
-
-    // Temporary secure browser storage.
-    // Later we will move this to Supabase.
-    response.cookies.set("toolost_access_token", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30,
-      path: "/",
-    });
+    response.cookies.set(
+      "toolost_access_token",
+      accessToken,
+      {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60 * 24 * 30,
+        path: "/",
+      }
+    );
 
     response.cookies.delete("toolost_oauth_state");
     response.cookies.delete("toolost_code_verifier");
 
     return response;
   } catch (error) {
-    console.error("Too Lost OAuth error:", error);
+    console.error("Too Lost OAuth callback error:", error);
 
     return NextResponse.json(
       {

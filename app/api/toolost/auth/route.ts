@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
-function base64Url(buffer: Buffer) {
+function base64UrlEncode(buffer: Buffer) {
   return buffer
     .toString("base64")
     .replace(/\+/g, "-")
@@ -18,23 +18,27 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: "Too Lost environment variables are missing",
+        error: "Too Lost OAuth environment variables are missing",
       },
       { status: 500 }
     );
   }
 
-  const state = base64Url(crypto.randomBytes(32));
-  const codeVerifier = base64Url(crypto.randomBytes(32));
+  // OAuth state
+  const state = base64UrlEncode(crypto.randomBytes(32));
 
-  const codeChallenge = base64Url(
+  // PKCE verifier
+  const codeVerifier = base64UrlEncode(crypto.randomBytes(32));
+
+  // PKCE challenge
+  const codeChallenge = base64UrlEncode(
     crypto.createHash("sha256").update(codeVerifier).digest()
   );
 
   const params = new URLSearchParams({
-    response_type: "code",
     client_id: clientId,
     redirect_uri: redirectUri,
+    response_type: "code",
     scope: "read:profile",
     state,
     code_challenge: codeChallenge,
@@ -49,7 +53,7 @@ export async function GET() {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 600,
+    maxAge: 10 * 60,
     path: "/",
   });
 
@@ -57,7 +61,7 @@ export async function GET() {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 600,
+    maxAge: 10 * 60,
     path: "/",
   });
 
