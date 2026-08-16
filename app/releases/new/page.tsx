@@ -287,116 +287,603 @@ export default function NewReleasePage() {
   }
 
   async function submitRelease(e: FormEvent) {
-    e.preventDefault();
+  e.preventDefault();
 
-    const validationError = validateBeforeSubmit();
-    if (validationError) {
-      alert(validationError);
+  const validationError = validateBeforeSubmit();
+
+  if (validationError) {
+    alert(validationError);
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    // -----------------------------------------
+    // LOGIN CHECK
+    // -----------------------------------------
+
+    const {
+      data: userData,
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !userData.user) {
+      alert("Please login first.");
+      router.push("/login");
       return;
     }
 
-    setLoading(true);
+    // -----------------------------------------
+    // PROFILE
+    // -----------------------------------------
 
-    try {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !userData.user) {
-        alert("Please login first.");
-        router.push("/login");
-        return;
-      }
-
-      const { data: profile } = await supabase
+    const { data: profile } =
+      await supabase
         .from("profiles")
         .select("white_label_id")
         .eq("id", userData.user.id)
         .maybeSingle();
 
-      const generatedUpc = autoUpc ? `NX${Date.now().toString().slice(-10)}` : upc;
-      const artworkUrl = await uploadFile("release-artwork", artwork as File);
+    // -----------------------------------------
+    // UPC
+    // -----------------------------------------
 
-      let licenseUrl = "";
-      if (licenseFile) licenseUrl = await uploadFile("release-artwork", licenseFile);
+    const generatedUpc = autoUpc
+      ? `NX${Date.now()
+          .toString()
+          .slice(-10)}`
+      : upc;
 
-      const { data: releaseData, error: releaseError } = await supabase
-        .from("releases")
-        .insert({
-          user_id: userData.user.id,
-          white_label_id: profile?.white_label_id || null,
-          title,
-          subtitle: version,
-          version,
-          release_artists: artists.filter(Boolean),
-          artist_name: mainArtist,
-          label_name: labelName,
-          genre,
-          language,
-          release_date: releaseDate,
-          music_created_date: musicCreatedDate || null,
-          music_type: musicType,
-          previously_released: previouslyReleased,
-          previous_upc: previouslyReleased ? previousUpc : null,
-          content_id_required: contentIdRequired,
-          selected_dsps: selectedDSPs,
-          selected_countries: selectedCountries,
-          license_url: licenseUrl || null,
-          lyrics_text: lyricsText,
-          upc: generatedUpc,
-          auto_upc: generatedUpc,
-          release_type: releaseType,
-          artwork_url: artworkUrl,
-          status: "submitted",
-        })
-        .select()
-        .single();
+    // -----------------------------------------
+    // TOO LOST CONNECTION CHECK
+    // -----------------------------------------
 
-      if (releaseError) throw releaseError;
+    alert(
+      "Creating release on Too Lost..."
+    );
 
-      for (let i = 0; i < tracks.length; i++) {
-        const audioUrl = await uploadFile("release-audio", tracks[i].audio as File);
-        const generatedIsrc = tracks[i].auto_isrc
-          ? `NX${new Date().getFullYear()}${String(i + 1).padStart(5, "0")}${Date.now().toString().slice(-3)}`
-          : tracks[i].isrc;
+    const meResponse = await fetch(
+      "/api/toolost/me",
+      {
+        method: "GET",
+        cache: "no-store",
+      }
+    );
 
-        const { error: trackError } = await supabase.from("tracks").insert({
-          release_id: releaseData.id,
-          title: tracks[i].title,
-          artist_name: mainArtist,
-          isrc: generatedIsrc,
-          auto_isrc: generatedIsrc,
-          auto_isrc_enabled: tracks[i].auto_isrc,
-          previous_isrc: tracks[i].previous_isrc_enabled ? tracks[i].previous_isrc : null,
-          audio_url: audioUrl,
-          track_number: i + 1,
-          explicit: tracks[i].explicit,
-          composer: tracks[i].composer,
-          lyricist: tracks[i].lyricist,
-          producer: tracks[i].producer,
-          publisher: tracks[i].publisher,
-          version: tracks[i].version,
-          language: tracks[i].language,
-          content_type: tracks[i].content_type,
-        });
+    const meText =
+      await meResponse.text();
 
-        if (trackError) throw trackError;
+    let meData: any;
+
+    try {
+      meData = JSON.parse(meText);
+    } catch {
+      throw new Error(
+        `Too Lost connection check failed: ${meText.slice(
+          0,
+          500
+        )}`
+      );
+    }
+
+    if (
+      !meResponse.ok ||
+      !meData.connected
+    ) {
+      throw new Error(
+        "Too Lost is not connected. Please connect Too Lost first."
+      );
+    }
+
+    // -----------------------------------------
+    // CREATE TOO LOST RELEASE
+    // -----------------------------------------
+
+    const tooLostReleaseResponse =
+      await fetch(
+        "/api/toolost/releases/create",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            title,
+            type:
+              releaseType === "album"
+                ? "Album"
+                : releaseType === "ep"
+                ? "EP"
+                : "Single",
+
+            label: labelName,
+
+            artistName:
+              artists
+                .filter(Boolean)
+                .join(", "),
+
+            role: "primary",
+          }),
+        }
+      );
+
+    const tooLostReleaseText =
+      await tooLostReleaseResponse.text();
+
+    let tooLostReleaseData: any;
+
+    try {
+      tooLostReleaseData =
+        JSON.parse(
+          tooLostReleaseText
+        );
+    } catch {
+      throw new Error(
+        `Too Lost release API returned non-JSON (${tooLostReleaseResponse.status}): ${tooLostReleaseText.slice(
+          0,
+          1000
+        )}`
+      );
+    }
+
+    if (
+      !tooLostReleaseResponse.ok ||
+      !tooLostReleaseData.success
+    ) {
+      throw new Error(
+        tooLostReleaseData.error ||
+          JSON.stringify(
+            tooLostReleaseData
+          )
+      );
+    }
+
+    const tooLostRelease =
+      tooLostReleaseData?.data?.data ??
+      tooLostReleaseData?.data ??
+      tooLostReleaseData;
+
+    const tooLostReleaseId =
+      tooLostRelease?.id;
+
+    if (!tooLostReleaseId) {
+      throw new Error(
+        "Too Lost did not return a release ID."
+      );
+    }
+
+    console.log(
+      "Too Lost release created:",
+      tooLostReleaseId
+    );
+
+    // -----------------------------------------
+    // ARTWORK → SUPABASE
+    // -----------------------------------------
+
+    const artworkUrl =
+      await uploadFile(
+        "release-artwork",
+        artwork as File
+      );
+
+    let licenseUrl = "";
+
+    if (licenseFile) {
+      licenseUrl =
+        await uploadFile(
+          "release-artwork",
+          licenseFile
+        );
+    }
+
+    // -----------------------------------------
+    // SUPABASE RELEASE
+    // -----------------------------------------
+
+    const {
+      data: releaseData,
+      error: releaseError,
+    } = await supabase
+      .from("releases")
+      .insert({
+        user_id:
+          userData.user.id,
+
+        white_label_id:
+          profile?.white_label_id ||
+          null,
+
+        title,
+
+        subtitle: version,
+
+        version,
+
+        release_artists:
+          artists.filter(Boolean),
+
+        artist_name:
+          mainArtist,
+
+        label_name:
+          labelName,
+
+        genre,
+
+        language,
+
+        release_date:
+          releaseDate,
+
+        music_created_date:
+          musicCreatedDate || null,
+
+        music_type:
+          musicType,
+
+        previously_released:
+          previouslyReleased,
+
+        previous_upc:
+          previouslyReleased
+            ? previousUpc
+            : null,
+
+        content_id_required:
+          contentIdRequired,
+
+        selected_dsps:
+          selectedDSPs,
+
+        selected_countries:
+          selectedCountries,
+
+        license_url:
+          licenseUrl || null,
+
+        lyrics_text:
+          lyricsText,
+
+        upc:
+          generatedUpc,
+
+        auto_upc:
+          generatedUpc,
+
+        release_type:
+          releaseType,
+
+        artwork_url:
+          artworkUrl,
+
+        toolost_release_id:
+          String(
+            tooLostReleaseId
+          ),
+
+        status: "draft",
+      })
+      .select()
+      .single();
+
+    if (releaseError) {
+      throw releaseError;
+    }
+
+    // -----------------------------------------
+    // TRACK UPLOADS
+    // -----------------------------------------
+
+    for (
+      let i = 0;
+      i < tracks.length;
+      i++
+    ) {
+      const track =
+        tracks[i];
+
+      alert(
+        `Uploading track ${i + 1} of ${tracks.length} to Too Lost...`
+      );
+
+      if (!track.audio) {
+        throw new Error(
+          `Track ${i + 1} audio is missing.`
+        );
       }
 
-      await supabase.from("notifications").insert({
-        user_id: userData.user.id,
-        title: "Release submitted",
-        message: `Your release "${title}" has been submitted for review.`,
-        type: "release",
-        is_read: false,
+      // ---------------------------------------
+      // GET TOO LOST UPLOAD URL
+      // ---------------------------------------
+
+      const uploadUrlResponse =
+        await fetch(
+          "/api/toolost/upload-url",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+              releaseId:
+                tooLostReleaseId,
+
+              fileName:
+                track.audio.name,
+
+              contentType:
+                track.audio.type ||
+                "audio/wav",
+            }),
+          }
+        );
+
+      const uploadUrlText =
+        await uploadUrlResponse.text();
+
+      let uploadUrlData: any;
+
+      try {
+        uploadUrlData =
+          JSON.parse(
+            uploadUrlText
+          );
+      } catch {
+        throw new Error(
+          `Too Lost upload URL returned non-JSON (${uploadUrlResponse.status}): ${uploadUrlText.slice(
+            0,
+            1000
+          )}`
+        );
+      }
+
+      if (
+        !uploadUrlResponse.ok ||
+        !uploadUrlData.success
+      ) {
+        throw new Error(
+          uploadUrlData.error ||
+            JSON.stringify(
+              uploadUrlData
+            )
+        );
+      }
+
+      const uploadUrl =
+        uploadUrlData.uploadUrl;
+
+      const fileKey =
+        uploadUrlData.fileKey;
+
+      const uploadMethod =
+        uploadUrlData.method ||
+        "PUT";
+
+      const uploadHeaders =
+        uploadUrlData.headers ||
+        {};
+
+      if (
+        !uploadUrl ||
+        !fileKey
+      ) {
+        throw new Error(
+          "Too Lost did not return uploadUrl/fileKey."
+        );
+      }
+
+      // ---------------------------------------
+      // DIRECT AUDIO UPLOAD
+      // Browser → Too Lost
+      // ---------------------------------------
+
+      const audioHeaders =
+        new Headers(
+          uploadHeaders
+        );
+
+      if (
+        !audioHeaders.has(
+          "Content-Type"
+        )
+      ) {
+        audioHeaders.set(
+          "Content-Type",
+          track.audio.type ||
+            "audio/wav"
+        );
+      }
+
+      const directUpload =
+        await fetch(
+          uploadUrl,
+          {
+            method:
+              uploadMethod,
+
+            headers:
+              audioHeaders,
+
+            body:
+              track.audio,
+          }
+        );
+
+      if (
+        !directUpload.ok
+      ) {
+        const uploadError =
+          await directUpload.text();
+
+        throw new Error(
+          `Too Lost audio upload failed (${directUpload.status}): ${uploadError.slice(
+            0,
+            1000
+          )}`
+        );
+      }
+
+      // ---------------------------------------
+      // GET TRACKS
+      // ---------------------------------------
+
+      const tracksResponse =
+        await fetch(
+          `/api/toolost/releases`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+      // ---------------------------------------
+      // SUPABASE AUDIO
+      // ---------------------------------------
+
+      const audioUrl =
+        await uploadFile(
+          "release-audio",
+          track.audio
+        );
+
+      const generatedIsrc =
+        track.auto_isrc
+          ? `NX${new Date()
+              .getFullYear()}${String(
+              i + 1
+            ).padStart(
+              5,
+              "0"
+            )}${Date.now()
+              .toString()
+              .slice(-3)}`
+          : track.isrc;
+
+      // ---------------------------------------
+      // SAVE TRACK TO SUPABASE
+      // ---------------------------------------
+
+      const {
+        error: trackError,
+      } = await supabase
+        .from("tracks")
+        .insert({
+          release_id:
+            releaseData.id,
+
+          title:
+            track.title,
+
+          artist_name:
+            mainArtist,
+
+          isrc:
+            generatedIsrc,
+
+          auto_isrc:
+            generatedIsrc,
+
+          auto_isrc_enabled:
+            track.auto_isrc,
+
+          previous_isrc:
+            track.previous_isrc_enabled
+              ? track.previous_isrc
+              : null,
+
+          audio_url:
+            audioUrl,
+
+          track_number:
+            i + 1,
+
+          explicit:
+            track.explicit,
+
+          composer:
+            track.composer,
+
+          lyricist:
+            track.lyricist,
+
+          producer:
+            track.producer,
+
+          publisher:
+            track.publisher,
+
+          version:
+            track.version,
+
+          language:
+            track.language,
+
+          content_type:
+            track.content_type,
+
+          toolost_file_key:
+            fileKey,
+        });
+
+      if (trackError) {
+        throw trackError;
+      }
+    }
+
+    // -----------------------------------------
+    // NOTIFICATION
+    // -----------------------------------------
+
+    await supabase
+      .from("notifications")
+      .insert({
+        user_id:
+          userData.user.id,
+
+        title:
+          "Too Lost draft created",
+
+        message:
+          `Release "${title}" was created as a draft on Too Lost. Release ID: ${tooLostReleaseId}`,
+
+        type:
+          "release",
+
+        is_read:
+          false,
       });
 
-      alert("Release submitted successfully.");
-      router.push("/releases");
-    } catch (err: any) {
-      alert(err.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
+    // -----------------------------------------
+    // SUCCESS
+    // -----------------------------------------
+
+    alert(
+      `Release draft created successfully on Too Lost!\n\nToo Lost Release ID: ${tooLostReleaseId}\n\nStatus: DRAFT`
+    );
+
+    router.push(
+      `/releases/${releaseData.id}`
+    );
+  } catch (err: any) {
+    console.error(
+      "Release submission error:",
+      err
+    );
+
+    alert(
+      err?.message ||
+        "Something went wrong while creating the release."
+    );
+  } finally {
+    setLoading(false);
   }
+}
 
   return (
     <main style={pageStyle}>
@@ -407,24 +894,109 @@ export default function NewReleasePage() {
           ← Exit
         </button>
 
-        <div style={stepsBar}>
-          {steps.map((step) => (
-            <button
-              key={step}
-              type="button"
-              onClick={() => setActiveStep(step)}
-              style={{
-                ...stepBtn,
-                borderBottom: activeStep === step ? "3px solid #2563EB" : "3px solid transparent",
-                color: activeStep === step ? "white" : "#94A3B8",
-                background: activeStep === step ? "#1D4ED8" : "#111827",
-                fontWeight: activeStep === step ? "bold" : "normal",
-              }}
-            >
-              {step}
-            </button>
-          ))}
-        </div>
+        <button
+  type="button"
+  disabled={loading}
+  onClick={async () => {
+    try {
+      setLoading(true);
+
+      const connectionResponse =
+        await fetch("/api/toolost/me", {
+          cache: "no-store",
+        });
+
+      const connectionData =
+        await connectionResponse.json();
+
+      if (
+        !connectionResponse.ok ||
+        !connectionData.connected
+      ) {
+        alert(
+          "Please connect Too Lost first."
+        );
+        return;
+      }
+
+      const tooLostReleaseId =
+        prompt(
+          "Enter the Too Lost Release ID:"
+        );
+
+      if (!tooLostReleaseId) {
+        return;
+      }
+
+      const response =
+        await fetch(
+          "/api/toolost/releases/submit",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              releaseId:
+                tooLostReleaseId,
+            }),
+          }
+        );
+
+      const text =
+        await response.text();
+
+      let data: any;
+
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(
+          `Too Lost returned non-JSON (${response.status}): ${text.slice(
+            0,
+            1000
+          )}`
+        );
+      }
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        throw new Error(
+          data.error ||
+            JSON.stringify(data)
+        );
+      }
+
+      alert(
+        "✓ Release submitted successfully to Too Lost!"
+      );
+
+      console.log(
+        "Too Lost submit result:",
+        data
+      );
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Too Lost submission failed."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }}
+  className="rounded-xl bg-green-600 px-6 py-3 font-semibold text-white disabled:opacity-50"
+>
+  {loading
+    ? "Submitting..."
+    : "Submit to Too Lost"}
+</button>
+
       </div>
 
       <form onSubmit={submitRelease} style={layout}>
