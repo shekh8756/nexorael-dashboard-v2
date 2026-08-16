@@ -25,8 +25,8 @@ export async function POST(request: NextRequest) {
 
     const {
       releaseId,
-      fileName,
-      contentType,
+      title,
+      fileKey,
     } = body;
 
     if (!releaseId) {
@@ -39,30 +39,56 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!fileName) {
+    if (!fileKey) {
       return NextResponse.json(
         {
           success: false,
-          error: "fileName is required",
+          error: "fileKey is required",
         },
         { status: 400 }
       );
     }
 
+    const tracksBody = {
+      tracks: [
+        {
+          title:
+            title || "Nexorael Audio Test",
+
+          language: "en",
+
+          audioFileKey: fileKey,
+
+          artists: [
+            {
+              name: "MD SAHID MIYA",
+              role: ["primary"],
+            },
+          ],
+        },
+      ],
+    };
+
+    console.log(
+      "Too Lost tracks request:",
+      JSON.stringify(
+        tracksBody,
+        null,
+        2
+      )
+    );
+
     const result = await tooLostApi(
       accessToken,
-      `/releases/${releaseId}/tracks/upload-url`,
+      `/releases/${releaseId}/tracks`,
       {
-        method: "POST",
+        method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          kind: "audio",
-          fileName,
-          contentType:
-            contentType || "audio/wav",
-        }),
+        body: JSON.stringify(
+          tracksBody
+        ),
       }
     );
 
@@ -80,7 +106,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error(
-      "Too Lost upload URL error:",
+      "Too Lost finalize track error:",
       error
     );
 
@@ -90,7 +116,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to create upload URL",
+            : "Failed to save track",
       },
       { status: 500 }
     );

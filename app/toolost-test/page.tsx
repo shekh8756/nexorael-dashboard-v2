@@ -3,23 +3,36 @@
 import { useState } from "react";
 
 export default function TooLostTestPage() {
-  const [audio, setAudio] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [audio, setAudio] =
+    useState<File | null>(null);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [status, setStatus] =
+    useState("");
+
+  const [result, setResult] =
+    useState<any>(null);
 
   async function uploadAudio() {
     if (!audio) {
       setResult({
         success: false,
-        error: "Please select a WAV audio file first.",
+        error: "Please select a WAV file.",
       });
       return;
     }
 
-    if (!audio.name.toLowerCase().endsWith(".wav")) {
+    if (
+      !audio.name
+        .toLowerCase()
+        .endsWith(".wav")
+    ) {
       setResult({
         success: false,
-        error: "Only WAV files are allowed.",
+        error:
+          "Only WAV files are allowed.",
       });
       return;
     }
@@ -28,31 +41,270 @@ export default function TooLostTestPage() {
     setResult(null);
 
     try {
-      const formData = new FormData();
+      // ------------------------------------------
+      // STEP 1
+      // CREATE DRAFT RELEASE
+      // ------------------------------------------
 
-      formData.append("audio", audio);
-
-      const response = await fetch(
-        "/api/toolost/test-upload",
-        {
-          method: "POST",
-          body: formData,
-        }
+      setStatus(
+        "1/4 Creating Too Lost draft release..."
       );
 
-      const data = await response.json();
+      const releaseResponse =
+        await fetch(
+          "/api/toolost/releases/create",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              title:
+                "Nexorael Audio Test",
+              type: "Single",
+              label: "Nexorael",
+              artistName:
+                "MD SAHID MIYA",
+              role: "primary",
+            }),
+          }
+        );
+
+      const releaseData =
+        await releaseResponse.json();
+
+      if (
+        !releaseResponse.ok ||
+        !releaseData.success
+      ) {
+        throw new Error(
+          JSON.stringify(
+            releaseData
+          )
+        );
+      }
+
+      const release =
+        releaseData?.data?.data ??
+        releaseData?.data ??
+        releaseData;
+
+      const releaseId =
+        release?.id;
+
+      if (!releaseId) {
+        throw new Error(
+          "Release ID was not returned."
+        );
+      }
+
+      // ------------------------------------------
+      // STEP 2
+      // GET DIRECT UPLOAD URL
+      // ------------------------------------------
+
+      setStatus(
+        "2/4 Getting Too Lost upload URL..."
+      );
+
+      const uploadUrlResponse =
+        await fetch(
+          "/api/toolost/upload-url",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              releaseId,
+              fileName:
+                audio.name,
+              contentType:
+                audio.type ||
+                "audio/wav",
+            }),
+          }
+        );
+
+      const uploadUrlData =
+        await uploadUrlResponse.json();
+
+      if (
+        !uploadUrlResponse.ok ||
+        !uploadUrlData.success
+      ) {
+        throw new Error(
+          JSON.stringify(
+            uploadUrlData
+          )
+        );
+      }
+
+      const upload =
+        uploadUrlData?.data
+          ?.data ??
+        uploadUrlData?.data ??
+        uploadUrlData;
+
+      const uploadUrl =
+        upload?.uploadUrl;
+
+      const fileKey =
+        upload?.fileKey;
+
+      const uploadMethod =
+        upload?.method ||
+        "PUT";
+
+      const uploadHeaders =
+        upload?.headers || {};
+
+      if (
+        !uploadUrl ||
+        !fileKey
+      ) {
+        throw new Error(
+          "Too Lost did not return uploadUrl/fileKey."
+        );
+      }
+
+      // ------------------------------------------
+      // STEP 3
+      // DIRECT WAV UPLOAD
+      // ------------------------------------------
+
+      setStatus(
+        "3/4 Uploading WAV directly to Too Lost..."
+      );
+
+      const headers =
+        new Headers(
+          uploadHeaders
+        );
+
+      if (
+        !headers.has(
+          "Content-Type"
+        )
+      ) {
+        headers.set(
+          "Content-Type",
+          audio.type ||
+            "audio/wav"
+        );
+      }
+
+      const directUpload =
+        await fetch(
+          uploadUrl,
+          {
+            method:
+              uploadMethod,
+            headers,
+            body: audio,
+          }
+        );
+
+      if (
+        !directUpload.ok
+      ) {
+        const text =
+          await directUpload.text();
+
+        throw new Error(
+          `Direct Too Lost upload failed (${directUpload.status}): ${text}`
+        );
+      }
+
+      // ------------------------------------------
+      // STEP 4
+      // SAVE TRACK IN RELEASE
+      // ------------------------------------------
+
+      setStatus(
+        "4/4 Saving track to Too Lost release..."
+      );
+
+      const finalizeResponse =
+        await fetch(
+          "/api/toolost/finalize-track",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              releaseId,
+              title:
+                "Nexorael Audio Test",
+              fileKey,
+            }),
+          }
+        );
+
+      const finalizeData =
+        await finalizeResponse.json();
+
+      if (
+        !finalizeResponse.ok ||
+        !finalizeData.success
+      ) {
+        throw new Error(
+          JSON.stringify(
+            finalizeData
+          )
+        );
+      }
+
+      setStatus(
+        "Completed successfully."
+      );
 
       setResult({
-        httpStatus: response.status,
-        ...data,
+        success: true,
+
+        message:
+          "WAV uploaded and track saved as draft.",
+
+        releaseId,
+
+        fileKey,
+
+        audio: {
+          name:
+            audio.name,
+          size:
+            audio.size,
+          sizeMB:
+            (
+              audio.size /
+              1024 /
+              1024
+            ).toFixed(2),
+          type:
+            audio.type ||
+            "audio/wav",
+        },
+
+        tooLostResponse:
+          finalizeData.data,
+
+        note:
+          "The release is still a draft. It has NOT been submitted or published.",
       });
     } catch (error) {
+      setStatus("Upload failed.");
+
       setResult({
         success: false,
+
         error:
           error instanceof Error
             ? error.message
-            : "Upload request failed",
+            : "Upload failed",
       });
     } finally {
       setLoading(false);
@@ -68,30 +320,33 @@ export default function TooLostTestPage() {
         </h1>
 
         <p className="mt-2 text-zinc-400">
-          Create a draft release and upload a WAV track to Too Lost.
+          Direct WAV upload to Too Lost
         </p>
 
         <div className="mt-8">
-          <label className="mb-3 block text-sm font-medium text-zinc-300">
+          <label className="mb-3 block text-sm font-medium">
             Select WAV Audio
           </label>
 
           <input
             type="file"
             accept=".wav,audio/wav"
+            disabled={loading}
             onChange={(event) => {
-              const file =
-                event.target.files?.[0] || null;
+              setAudio(
+                event.target.files?.[0] ||
+                  null
+              );
 
-              setAudio(file);
               setResult(null);
+              setStatus("");
             }}
-            className="block w-full rounded-xl border border-white/10 bg-black p-4 text-sm text-white file:mr-4 file:rounded-lg file:border-0 file:bg-white file:px-4 file:py-2 file:font-semibold file:text-black"
+            className="block w-full rounded-xl border border-white/10 bg-black p-4 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-white file:px-4 file:py-2 file:font-semibold file:text-black"
           />
         </div>
 
         {audio && (
-          <div className="mt-4 rounded-xl border border-white/10 bg-black p-4">
+          <div className="mt-4 rounded-xl bg-black p-4">
             <p className="text-sm text-zinc-400">
               Selected file
             </p>
@@ -101,18 +356,31 @@ export default function TooLostTestPage() {
             </p>
 
             <p className="mt-1 text-sm text-zinc-500">
-              {(audio.size / 1024 / 1024).toFixed(2)} MB
+              {(
+                audio.size /
+                1024 /
+                1024
+              ).toFixed(2)}{" "}
+              MB
             </p>
+          </div>
+        )}
+
+        {status && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-black p-4 text-sm text-zinc-300">
+            {status}
           </div>
         )}
 
         <button
           onClick={uploadAudio}
-          disabled={loading || !audio}
-          className="mt-6 w-full rounded-xl bg-white px-6 py-4 font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={
+            loading || !audio
+          }
+          className="mt-6 w-full rounded-xl bg-white px-6 py-4 font-semibold text-black disabled:opacity-50"
         >
           {loading
-            ? "Uploading to Too Lost..."
+            ? "Processing..."
             : "Upload WAV to Too Lost"}
         </button>
 
@@ -124,7 +392,11 @@ export default function TooLostTestPage() {
                 : "text-red-400"
             }`}
           >
-            {JSON.stringify(result, null, 2)}
+            {JSON.stringify(
+              result,
+              null,
+              2
+            )}
           </pre>
         )}
 
