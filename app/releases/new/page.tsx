@@ -318,30 +318,25 @@ export default function NewReleasePage() {
     // PROFILE
     // -----------------------------------------
 
-    const { data: profile } =
-      await supabase
-        .from("profiles")
-        .select("white_label_id")
-        .eq("id", userData.user.id)
-        .maybeSingle();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("white_label_id")
+      .eq("id", userData.user.id)
+      .maybeSingle();
 
     // -----------------------------------------
     // UPC
     // -----------------------------------------
 
     const generatedUpc = autoUpc
-      ? `NX${Date.now()
-          .toString()
-          .slice(-10)}`
+      ? `NX${Date.now().toString().slice(-10)}`
       : upc;
 
     // -----------------------------------------
-    // TOO LOST CONNECTION CHECK
+    // TOO LOST CONNECTION
     // -----------------------------------------
 
-    alert(
-      "Creating release on Too Lost..."
-    );
+    alert("Creating release on Too Lost...");
 
     const meResponse = await fetch(
       "/api/toolost/me",
@@ -351,8 +346,7 @@ export default function NewReleasePage() {
       }
     );
 
-    const meText =
-      await meResponse.text();
+    const meText = await meResponse.text();
 
     let meData: any;
 
@@ -385,12 +379,15 @@ export default function NewReleasePage() {
         "/api/toolost/releases/create",
         {
           method: "POST",
+
           headers: {
             "Content-Type":
               "application/json",
           },
+
           body: JSON.stringify({
             title,
+
             type:
               releaseType === "album"
                 ? "Album"
@@ -481,7 +478,7 @@ export default function NewReleasePage() {
     }
 
     // -----------------------------------------
-    // SUPABASE RELEASE
+    // SAVE RELEASE TO SUPABASE
     // -----------------------------------------
 
     const {
@@ -586,25 +583,51 @@ export default function NewReleasePage() {
       const track =
         tracks[i];
 
-      alert(
-        `Uploading track ${i + 1} of ${tracks.length} to Too Lost...`
-      );
-
       if (!track.audio) {
         throw new Error(
           `Track ${i + 1} audio is missing.`
         );
       }
 
-      // ---------------------------------------
-      // GET TOO LOST UPLOAD URL
-      // ---------------------------------------
+      // -----------------------------------------
+      // UPLOAD AUDIO TO SUPABASE
+      // -----------------------------------------
 
-      const uploadUrlResponse =
+      alert(
+        `Uploading track ${i + 1} of ${tracks.length} to Supabase...`
+      );
+
+      const audioUrl =
+        await uploadFile(
+          "release-audio",
+          track.audio
+        );
+
+      if (!audioUrl) {
+        throw new Error(
+          `Track ${i + 1}: Supabase audio upload failed.`
+        );
+      }
+
+      console.log(
+        "Supabase audio uploaded:",
+        audioUrl
+      );
+
+      // -----------------------------------------
+      // VERCEL SERVER → TOO LOST
+      // -----------------------------------------
+
+      alert(
+        `Uploading track ${i + 1} of ${tracks.length} to Too Lost...`
+      );
+
+      const serverUploadResponse =
         await fetch(
-          "/api/toolost/upload-url",
+          "/api/toolost/upload-audio",
           {
             method: "POST",
+
             headers: {
               "Content-Type":
                 "application/json",
@@ -620,23 +643,25 @@ export default function NewReleasePage() {
               contentType:
                 track.audio.type ||
                 "audio/wav",
+
+              audioUrl,
             }),
           }
         );
 
-      const uploadUrlText =
-        await uploadUrlResponse.text();
+      const serverUploadText =
+        await serverUploadResponse.text();
 
-      let uploadUrlData: any;
+      let serverUploadData: any;
 
       try {
-        uploadUrlData =
+        serverUploadData =
           JSON.parse(
-            uploadUrlText
+            serverUploadText
           );
       } catch {
         throw new Error(
-          `Too Lost upload URL returned non-JSON (${uploadUrlResponse.status}): ${uploadUrlText.slice(
+          `Server upload returned non-JSON (${serverUploadResponse.status}): ${serverUploadText.slice(
             0,
             1000
           )}`
@@ -644,113 +669,38 @@ export default function NewReleasePage() {
       }
 
       if (
-        !uploadUrlResponse.ok ||
-        !uploadUrlData.success
+        !serverUploadResponse.ok ||
+        !serverUploadData.success
       ) {
         throw new Error(
-          uploadUrlData.error ||
+          serverUploadData.error ||
             JSON.stringify(
-              uploadUrlData
+              serverUploadData
             )
         );
       }
 
-      const uploadUrl =
-        uploadUrlData.uploadUrl;
-
       const fileKey =
-        uploadUrlData.fileKey;
+        serverUploadData.fileKey;
 
-      const uploadMethod =
-        uploadUrlData.method ||
-        "PUT";
-
-      const uploadHeaders =
-        uploadUrlData.headers ||
-        {};
-
-      if (
-        !uploadUrl ||
-        !fileKey
-      ) {
+      if (!fileKey) {
         throw new Error(
-          "Too Lost did not return uploadUrl/fileKey."
+          "Too Lost fileKey was not returned."
         );
       }
 
-      // ---------------------------------------
-      // DIRECT AUDIO UPLOAD
-      // Browser → Too Lost
-      // ---------------------------------------
+      console.log(
+        "Too Lost audio upload completed:",
+        {
+          releaseId:
+            tooLostReleaseId,
+          fileKey,
+        }
+      );
 
-      const audioHeaders =
-        new Headers(
-          uploadHeaders
-        );
-
-      if (
-        !audioHeaders.has(
-          "Content-Type"
-        )
-      ) {
-        audioHeaders.set(
-          "Content-Type",
-          track.audio.type ||
-            "audio/wav"
-        );
-      }
-
-      const directUpload =
-        await fetch(
-          uploadUrl,
-          {
-            method:
-              uploadMethod,
-
-            headers:
-              audioHeaders,
-
-            body:
-              track.audio,
-          }
-        );
-
-      if (
-        !directUpload.ok
-      ) {
-        const uploadError =
-          await directUpload.text();
-
-        throw new Error(
-          `Too Lost audio upload failed (${directUpload.status}): ${uploadError.slice(
-            0,
-            1000
-          )}`
-        );
-      }
-
-      // ---------------------------------------
-      // GET TRACKS
-      // ---------------------------------------
-
-      const tracksResponse =
-        await fetch(
-          `/api/toolost/releases`,
-          {
-            method: "GET",
-            cache: "no-store",
-          }
-        );
-
-      // ---------------------------------------
-      // SUPABASE AUDIO
-      // ---------------------------------------
-
-      const audioUrl =
-        await uploadFile(
-          "release-audio",
-          track.audio
-        );
+      // -----------------------------------------
+      // GENERATE ISRC
+      // -----------------------------------------
 
       const generatedIsrc =
         track.auto_isrc
@@ -765,9 +715,9 @@ export default function NewReleasePage() {
               .slice(-3)}`
           : track.isrc;
 
-      // ---------------------------------------
+      // -----------------------------------------
       // SAVE TRACK TO SUPABASE
-      // ---------------------------------------
+      // -----------------------------------------
 
       const {
         error: trackError,
@@ -870,6 +820,7 @@ export default function NewReleasePage() {
     router.push(
       `/releases/${releaseData.id}`
     );
+
   } catch (err: any) {
     console.error(
       "Release submission error:",
