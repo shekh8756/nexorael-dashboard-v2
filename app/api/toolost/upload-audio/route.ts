@@ -1,13 +1,101 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+function findUploadData(value: any): {
+  uploadUrl?: string;
+  fileKey?: string;
+  method?: string;
+  headers?: Record<string, string>;
+} {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const uploadUrl =
+    value.uploadUrl ??
+    value.upload_url ??
+    value.url ??
+    value.signedUrl ??
+    value.signed_url;
+
+  const fileKey =
+    value.fileKey ??
+    value.file_key ??
+    value.key;
+
+  if (uploadUrl || fileKey) {
+    return {
+      uploadUrl,
+      fileKey,
+      method:
+        value.method ??
+        value.httpMethod ??
+        value.http_method,
+      headers:
+        value.headers ??
+        value.uploadHeaders ??
+        value.upload_headers,
+    };
+  }
+
+  for (const key of [
+    "data",
+    "result",
+    "upload",
+    "file",
+    "payload",
+  ]) {
+    if (value[key]) {
+      const found = findUploadData(value[key]);
+
+      if (
+        found.uploadUrl ||
+        found.fileKey
+      ) {
+        return found;
+      }
+    }
+  }
+
+  return {};
+}
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const body = await request.json();
+    // -----------------------------------------
+    // 1. GET TOO LOST ACCESS TOKEN
+    // -----------------------------------------
+
+    const cookieStore = await cookies();
+
+    const accessToken =
+      cookieStore.get(
+        "toolost_access_token"
+      )?.value;
+
+    if (!accessToken) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Too Lost is not connected",
+        },
+        { status: 401 }
+      );
+    }
+
+    // -----------------------------------------
+    // 2. READ REQUEST
+    // -----------------------------------------
+
+    const body =
+      await request.json();
 
     const {
       releaseId,
@@ -20,7 +108,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "releaseId is required.",
+          error:
+            "releaseId is required.",
         },
         { status: 400 }
       );
@@ -30,7 +119,8 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "fileName is required.",
+          error:
+            "fileName is required.",
         },
         { status: 400 }
       );
@@ -40,117 +130,108 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-          error: "audioUrl is required.",
+          error:
+            "audioUrl is required.",
         },
         { status: 400 }
       );
     }
 
     // -----------------------------------------
-    // GET TOO LOST PRESIGNED URL
+    // 3. GET TOO LOST PRESIGNED UPLOAD URL
     // -----------------------------------------
 
-    const uploadUrlResponse =
-      await fetch(
-        `${request.nextUrl.origin}/api/toolost/upload-url`,
+    console.log(
+      "Requesting Too Lost upload URL for release:",
+      releaseId
+    );
+
+    const uploadUrlResult =
+      await tooLostApi(
+        accessToken,
+        `/releases/${releaseId}/tracks/upload-url`,
         {
           method: "POST",
-
           headers: {
             "Content-Type":
               "application/json",
+            Accept:
+              "application/json",
           },
-
           body: JSON.stringify({
-            releaseId,
+            kind: "audio",
             fileName,
             contentType:
               contentType ||
               "audio/wav",
           }),
-
-          cache: "no-store",
         }
       );
 
-    const uploadUrlText =
-      await uploadUrlResponse.text();
+    console.log(
+      "Too Lost upload URL status:",
+      uploadUrlResult.response.status
+    );
 
-    let uploadUrlData: any;
+    console.log(
+      "Too Lost upload URL response:",
+      uploadUrlResult.data
+    );
 
-    try {
-      uploadUrlData =
-        JSON.parse(
-          uploadUrlText
-        );
-    } catch {
+    if (!uploadUrlResult.response.ok) {
       return NextResponse.json(
         {
           success: false,
+          step: "create_upload_url",
+          status:
+            uploadUrlResult.response.status,
           error:
-            `Too Lost upload URL returned non-JSON (${uploadUrlResponse.status}): ${uploadUrlText.slice(
-              0,
-              1000
-            )}`,
-        },
-        { status: 502 }
-      );
-    }
-
-    if (
-      !uploadUrlResponse.ok ||
-      !uploadUrlData.success
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            uploadUrlData.error ||
-            JSON.stringify(
-              uploadUrlData
-            ),
+            "Too Lost rejected upload URL request.",
+          tooLostResponse:
+            uploadUrlResult.data,
         },
         {
           status:
-            uploadUrlResponse.status,
+            uploadUrlResult.response.status,
         }
       );
     }
 
-    // Your existing upload-url API returns
-    // uploadUrl and fileKey directly.
-    const uploadUrl =
-      uploadUrlData.uploadUrl;
+    const upload =
+      findUploadData(
+        uploadUrlResult.data
+      );
 
-    const fileKey =
-      uploadUrlData.fileKey;
-
-    const method =
-      uploadUrlData.method ||
-      "PUT";
-
-    const uploadHeaders =
-      uploadUrlData.headers || {};
+    console.log(
+      "Too Lost normalized upload:",
+      upload
+    );
 
     if (
-      !uploadUrl ||
-      !fileKey
+      !upload.uploadUrl ||
+      !upload.fileKey
     ) {
       return NextResponse.json(
         {
           success: false,
+          step: "create_upload_url",
           error:
-            "Too Lost did not return uploadUrl/fileKey.",
+            "Too Lost did not return a usable upload URL/file key.",
           tooLostResponse:
-            uploadUrlData,
+            uploadUrlResult.data,
         },
         { status: 502 }
       );
     }
 
     // -----------------------------------------
-    // DOWNLOAD AUDIO FROM SUPABASE
+    // 4. DOWNLOAD AUDIO FROM SUPABASE
     // -----------------------------------------
+
+    console.log(
+      "Downloading audio from Supabase:",
+      audioUrl
+    );
 
     const sourceResponse =
       await fetch(
@@ -167,6 +248,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+          step: "download_audio",
           error:
             `Could not download audio from Supabase (${sourceResponse.status}).`,
           details:
@@ -188,6 +270,7 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+          step: "download_audio",
           error:
             "The Supabase audio file is empty.",
         },
@@ -195,21 +278,27 @@ export async function POST(
       );
     }
 
+    console.log(
+      "Audio downloaded:",
+      audioBuffer.byteLength,
+      "bytes"
+    );
+
     // -----------------------------------------
-    // VERCEL SERVER → TOO LOST
+    // 5. UPLOAD AUDIO TO TOO LOST S3
     // -----------------------------------------
 
-    const headers =
+    const uploadHeaders =
       new Headers(
-        uploadHeaders
+        upload.headers || {}
       );
 
     if (
-      !headers.has(
+      !uploadHeaders.has(
         "Content-Type"
       )
     ) {
-      headers.set(
+      uploadHeaders.set(
         "Content-Type",
         contentType ||
           "audio/wav"
@@ -222,39 +311,57 @@ export async function POST(
 
     const tooLostUpload =
       await fetch(
-        uploadUrl,
+        upload.uploadUrl,
         {
-          method,
-          headers,
-          body: audioBuffer,
+          method:
+            upload.method ||
+            "PUT",
+          headers:
+            uploadHeaders,
+          body:
+            audioBuffer,
         }
       );
 
-    if (
-      !tooLostUpload.ok
-    ) {
-      const errorText =
-        await tooLostUpload.text();
+    const uploadResponseText =
+      await tooLostUpload.text();
 
+    console.log(
+      "Too Lost binary upload status:",
+      tooLostUpload.status
+    );
+
+    console.log(
+      "Too Lost binary upload response:",
+      uploadResponseText
+    );
+
+    if (!tooLostUpload.ok) {
       return NextResponse.json(
         {
           success: false,
+          step: "too_lost_binary_upload",
           error:
             `Too Lost audio upload failed (${tooLostUpload.status}).`,
           details:
-            errorText.slice(
+            uploadResponseText.slice(
               0,
               2000
             ),
-          fileKey,
+          fileKey:
+            upload.fileKey,
         },
         { status: 502 }
       );
     }
 
+    // -----------------------------------------
+    // 6. SUCCESS
+    // -----------------------------------------
+
     console.log(
       "Too Lost audio upload successful:",
-      fileKey
+      upload.fileKey
     );
 
     return NextResponse.json({
@@ -267,14 +374,16 @@ export async function POST(
 
       fileName,
 
-      fileKey,
+      fileKey:
+        upload.fileKey,
 
-      method,
+      method:
+        upload.method ||
+        "PUT",
 
       sizeBytes:
         audioBuffer.byteLength,
     });
-
   } catch (error) {
     console.error(
       "Too Lost server upload error:",
@@ -284,7 +393,6 @@ export async function POST(
     return NextResponse.json(
       {
         success: false,
-
         error:
           error instanceof Error
             ? error.message
