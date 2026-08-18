@@ -228,41 +228,40 @@ export async function PATCH(
       );
 
       const {
-        response: toolostResponse,
-        data: toolostData,
-      } = await tooLostApi(
-        accessToken,
-        toolostPath,
-        {
-          method: "POST",
-          body: JSON.stringify({
-          acceptTerms: true,
-           confirmRights: true,
-          store: true,
-         }),
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-        }
-      );
+  response: toolostResponse,
+  data: toolostData,
+} = await tooLostApi(
+  accessToken,
+  toolostPath,
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      acceptTerms: true,
+      confirmRights: true,
+      confirmYoutubeRights: true,
+    }),
+  }
+);
 
-      console.log(
-        "Too Lost submit status:",
-        toolostResponse.status
-      );
+console.log(
+  "Too Lost submit status:",
+  toolostResponse.status
+);
 
-      console.log(
-        "Too Lost submit response:",
-        toolostData
-      );
+console.log(
+  "Too Lost submit response:",
+  toolostData
+);
 
-      /*
-       * If Too Lost rejects the request,
-       * DO NOT mark our release approved.
-       */
+/*
+ * If Too Lost rejects the request,
+ * DO NOT mark our release approved.
+ */
 
-      if (!toolostResponse.ok) {
+if (!toolostResponse.ok) {
   console.error("========== TOO LOST SUBMIT ERROR ==========");
   console.error("Status:", toolostResponse.status);
   console.error(
@@ -274,15 +273,10 @@ export async function PATCH(
   return NextResponse.json(
     {
       success: false,
-
       error: "Too Lost submission failed.",
-
       tooLostStatus: toolostResponse.status,
-
       tooLostResponse: toolostData,
-
-      releaseId:
-        releaseRow.toolost_release_id,
+      releaseId: releaseRow.toolost_release_id,
     },
     {
       status: 422,
