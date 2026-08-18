@@ -54,16 +54,44 @@ async function getAccessToken() {
 /**
  * Get real Too Lost platforms.
  */
-async function getTooLostPlatforms(accessToken: string) {
-  const {
-    response,
-    data,
-  } = await tooLostApi(
-    accessToken,
-    "lookup/platforms",
-    {
-      method: "GET",
-    }
+/**
+ * Get real Too Lost platforms/stores.
+ */
+async function getTooLostPlatforms(
+  accessToken: string
+) {
+  const { response, data } =
+    await tooLostApi(
+      accessToken,
+      "lookup/platforms",
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+  console.log(
+    "========== TOO LOST PLATFORMS =========="
+  );
+
+  console.log(
+    "Status:",
+    response.status
+  );
+
+  console.log(
+    "Raw response:",
+    JSON.stringify(
+      data,
+      null,
+      2
+    )
+  );
+
+  console.log(
+    "========================================"
   );
 
   if (!response.ok) {
@@ -72,59 +100,82 @@ async function getTooLostPlatforms(accessToken: string) {
     );
   }
 
-  const root =
-    data &&
-    typeof data === "object"
-      ? data as any
-      : {};
+  /*
+   * Too Lost may return the list at different
+   * nesting levels depending on the API response.
+   */
 
-  let platforms: any[] = [];
+  function findPlatformArray(
+    value: any
+  ): any[] {
+    if (Array.isArray(value)) {
+      return value;
+    }
 
-if (Array.isArray(root)) {
-  platforms = root;
-} else if (Array.isArray(root.data)) {
-  platforms = root.data;
-} else if (
-  root.data &&
-  typeof root.data === "object" &&
-  Array.isArray(root.data.platforms)
-) {
-  platforms = root.data.platforms;
-} else if (Array.isArray(root.platforms)) {
-  platforms = root.platforms;
-} else if (
-  root.result &&
-  Array.isArray(root.result)
-) {
-  platforms = root.result;
-} else if (
-  root.results &&
-  Array.isArray(root.results)
-) {
-  platforms = root.results;
-}
+    if (
+      !value ||
+      typeof value !== "object"
+    ) {
+      return [];
+    }
 
-console.log(
-  "========== TOO LOST PLATFORMS =========="
-);
+    const possibleKeys = [
+      "data",
+      "platforms",
+      "stores",
+      "items",
+      "results",
+    ];
 
-console.log(
-  "Total platforms:",
-  platforms.length
-);
+    for (const key of possibleKeys) {
+      const result =
+        findPlatformArray(
+          value[key]
+        );
 
-console.log(
-  "Platforms:",
-  platforms.map((platform: any) => ({
-    id: getPlatformId(platform),
-    name: getPlatformName(platform),
-    raw: platform,
-  }))
-);
+      if (result.length > 0) {
+        return result;
+      }
+    }
 
-console.log(
-  "========================================"
-);
+    return [];
+  }
+
+  const platforms =
+    findPlatformArray(data);
+
+  console.log(
+    "Too Lost platform count:",
+    platforms.length
+  );
+
+  console.log(
+    "Too Lost platforms:",
+    platforms.map(
+      (platform: any) => ({
+        id:
+          platform?.id ??
+          platform?.platform_id ??
+          platform?.store_id ??
+          platform?.storeId ??
+          platform?.platformId ??
+          platform?.code ??
+          platform?.key ??
+          null,
+
+        name:
+          platform?.name ??
+          platform?.title ??
+          platform?.label ??
+          platform?.display_name ??
+          platform?.displayName ??
+          platform?.slug ??
+          platform?.code ??
+          platform?.key ??
+          "",
+      })
+    )
+  );
 
   return platforms;
 }
@@ -135,85 +186,123 @@ console.log(
  */
 
 /**
- * Get actual Too Lost platform ID.
- * Supports different API response shapes.
+ * Normalize a DSP/platform name.
+ *
+ * Examples:
+ * Spotify              -> spotify
+ * Apple Music          -> apple
+ * YouTube Music        -> youtube
+ * Instagram / Facebook -> meta
+ * AudioMack            -> audiomack
+ */
+function normalizePlatformName(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/facebook/g, "meta")
+    .replace(/instagram/g, "meta")
+    .replace(/youtube\s*music/g, "youtube")
+    .replace(/youtube/g, "youtube")
+    .replace(/apple\s*music/g, "apple")
+    .replace(/amazon\s*music/g, "amazon")
+    .replace(/sound\s*cloud/g, "soundcloud")
+    .replace(/audio\s*mack/g, "audiomack")
+    .replace(/meta\s*rights\s*manager/g, "meta")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Get ID from a Too Lost platform object.
+ *
+ * Supports both flat and nested API structures.
  */
 function getPlatformId(platform: any): string | null {
-  const id =
+  if (!platform || typeof platform !== "object") {
+    return null;
+  }
+
+  const directId =
     platform?.id ??
     platform?.platform_id ??
     platform?.platformId ??
     platform?.store_id ??
     platform?.storeId ??
-    platform?.uuid ??
-    platform?.value ??
-    platform?.platform?.id ??
-    platform?.store?.id ??
-    platform?.data?.id ??
+    platform?.storeId ??
+    platform?.code ??
+    platform?.key ??
     null;
 
   if (
-    id === null ||
-    id === undefined ||
-    String(id).trim() === ""
+    directId !== null &&
+    directId !== undefined &&
+    String(directId).trim() !== ""
   ) {
-    return null;
+    return String(directId);
   }
 
-  return String(id).trim();
+  const nestedObjects = [
+    platform?.platform,
+    platform?.store,
+    platform?.service,
+    platform?.data,
+  ];
+
+  for (const nested of nestedObjects) {
+    const nestedId = getPlatformId(nested);
+
+    if (nestedId) {
+      return nestedId;
+    }
+  }
+
+  return null;
 }
 
 /**
- * Get platform name from Too Lost response.
+ * Get display name from a Too Lost platform object.
  *
- * Too Lost can return different structures,
- * so we check all common fields and nested objects.
+ * Supports flat and nested structures.
  */
 function getPlatformName(platform: any): string {
-  const possibleNames = [
-    platform?.name,
-    platform?.title,
-    platform?.label,
-    platform?.slug,
-    platform?.platform_name,
-    platform?.platformName,
-    platform?.store_name,
-    platform?.storeName,
-    platform?.service_name,
-    platform?.serviceName,
-    platform?.display_name,
-    platform?.displayName,
-    platform?.code,
-    platform?.platform_code,
-    platform?.store_code,
-    platform?.key,
+  if (!platform || typeof platform !== "object") {
+    return "";
+  }
 
-    platform?.platform?.name,
-    platform?.platform?.title,
-    platform?.platform?.label,
-    platform?.platform?.slug,
-    platform?.platform?.platform_name,
-    platform?.platform?.code,
+  const directName =
+    platform?.name ??
+    platform?.title ??
+    platform?.label ??
+    platform?.display_name ??
+    platform?.displayName ??
+    platform?.platform_name ??
+    platform?.platformName ??
+    platform?.store_name ??
+    platform?.storeName ??
+    platform?.service_name ??
+    platform?.serviceName ??
+    platform?.slug ??
+    "";
 
-    platform?.store?.name,
-    platform?.store?.title,
-    platform?.store?.label,
-    platform?.store?.slug,
-    platform?.store?.code,
+  if (
+    typeof directName === "string" &&
+    directName.trim()
+  ) {
+    return directName.trim();
+  }
 
-    platform?.data?.name,
-    platform?.data?.title,
-    platform?.data?.label,
-    platform?.data?.slug,
-    platform?.data?.code,
+  const nestedObjects = [
+    platform?.platform,
+    platform?.store,
+    platform?.service,
+    platform?.data,
   ];
 
-  for (const value of possibleNames) {
-    if (
-      typeof value === "string" &&
-      value.trim()
-    ) {
-      return value.trim();
+  for (const nested of nestedObjects) {
+    const nestedName = getPlatformName(nested);
+
+    if (nestedName) {
+      return nestedName;
     }
   }
 
@@ -221,133 +310,113 @@ function getPlatformName(platform: any): string {
 }
 
 /**
- * Normalize platform names.
- *
- * Example:
- * "Apple Music"       -> "applemusic"
- * "YouTube Music"     -> "youtubemusic"
- * "AudioMack"         -> "audiomack"
- * "Instagram / Facebook" -> "instagramfacebook"
+ * Get every possible searchable name from a
+ * Too Lost platform object.
  */
-function normalizePlatformName(value: unknown): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .trim()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]/g, "");
-}
+function getPlatformSearchNames(platform: any): string[] {
+  if (!platform || typeof platform !== "object") {
+    return [];
+  }
 
-/**
- * Get ALL possible searchable names from a Too Lost platform.
- *
- * This is important because Too Lost may return:
- *
- * {
- *   id: "...",
- *   platform: {
- *     name: "Audiomack"
- *   }
- * }
- *
- * or:
- *
- * {
- *   id: "...",
- *   store_name: "Audiomack"
- * }
- *
- * or another supported structure.
- */
-function getPlatformSearchNames(
-  platform: any
-): string[] {
   const values: unknown[] = [
     platform?.name,
     platform?.title,
     platform?.label,
-    platform?.slug,
+    platform?.display_name,
+    platform?.displayName,
 
     platform?.platform_name,
     platform?.platformName,
-    platform?.platform_code,
 
     platform?.store_name,
     platform?.storeName,
-    platform?.store_code,
 
     platform?.service_name,
     platform?.serviceName,
 
-    platform?.display_name,
-    platform?.displayName,
-
+    platform?.slug,
     platform?.code,
     platform?.key,
-
-    platform?.platform,
-    platform?.store,
-    platform?.service,
 
     platform?.platform?.name,
     platform?.platform?.title,
     platform?.platform?.label,
-    platform?.platform?.slug,
-    platform?.platform?.code,
+    platform?.platform?.display_name,
+    platform?.platform?.displayName,
     platform?.platform?.platform_name,
     platform?.platform?.platformName,
+    platform?.platform?.slug,
+    platform?.platform?.code,
 
     platform?.store?.name,
     platform?.store?.title,
     platform?.store?.label,
+    platform?.store?.display_name,
+    platform?.store?.displayName,
+    platform?.store?.store_name,
+    platform?.store?.storeName,
     platform?.store?.slug,
     platform?.store?.code,
+
+    platform?.service?.name,
+    platform?.service?.title,
+    platform?.service?.label,
+    platform?.service?.slug,
+    platform?.service?.code,
 
     platform?.data?.name,
     platform?.data?.title,
     platform?.data?.label,
+    platform?.data?.display_name,
+    platform?.data?.displayName,
     platform?.data?.slug,
     platform?.data?.code,
   ];
 
-  return values
-    .filter(
-      (value): value is string =>
-        typeof value === "string" &&
-        value.trim().length > 0
+  return Array.from(
+    new Set(
+      values
+        .filter(
+          (value): value is string =>
+            typeof value === "string" &&
+            value.trim().length > 0
+        )
+        .map(normalizePlatformName)
+        .filter(Boolean)
     )
-    .map(normalizePlatformName)
-    .filter(Boolean);
+  );
 }
 
 /**
- * DSP aliases.
+ * Dashboard DSP aliases.
  *
- * Left side = our dashboard DSP name.
- * Right side = possible Too Lost names.
+ * Left side = our dashboard name.
+ * Right side = possible names returned by Too Lost.
  */
 const DSP_ALIASES: Record<string, string[]> = {
   spotify: [
     "spotify",
   ],
 
-  applemusic: [
-    "applemusic",
+  apple: [
     "apple",
+    "applemusic",
     "itunes",
     "itunesstore",
     "applemusicstore",
   ],
 
-  youtubemusic: [
-    "youtubemusic",
+  youtube: [
     "youtube",
+    "youtubemusic",
+    "youtubeaudio",
     "ytmusic",
-    "youtubeofficial",
   ],
 
-  amazonmusic: [
-    "amazonmusic",
+  amazon: [
     "amazon",
+    "amazonmusic",
+    "amazonmp3",
     "amazonmusicunlimited",
   ],
 
@@ -361,13 +430,14 @@ const DSP_ALIASES: Record<string, string[]> = {
     "tiktokforartists",
   ],
 
-  instagramfacebook: [
-    "instagram",
+  meta: [
+    "meta",
     "facebook",
+    "instagram",
     "instagramfacebook",
     "facebookinstagram",
-    "meta",
     "metamusic",
+    "metarightsmanager",
   ],
 
   tidal: [
@@ -394,149 +464,251 @@ const DSP_ALIASES: Record<string, string[]> = {
 };
 
 /**
- * Match our dashboard DSP with a real Too Lost platform.
+ * Convert dashboard DSP name into aliases.
+ */
+function getDSPAliases(selectedName: string): string[] {
+  const normalized =
+    normalizePlatformName(selectedName);
+
+  return (
+    DSP_ALIASES[normalized] || [
+      normalized,
+    ]
+  );
+}
+
+/**
+ * Recursively search a Too Lost object.
+ *
+ * This handles structures such as:
+ *
+ * {
+ *   id: "123",
+ *   platform: {
+ *     name: "Audiomack"
+ *   }
+ * }
+ *
+ * OR:
+ *
+ * {
+ *   platform_id: "123",
+ *   platform_name: "Audiomack"
+ * }
+ *
+ * OR:
+ *
+ * {
+ *   data: {
+ *     store: {
+ *       name: "Audiomack"
+ *     }
+ *   }
+ * }
+ */
+function findPlatformMatchRecursive(
+  value: any,
+  aliases: string[],
+  parentId: string | null = null
+): {
+  platform: any;
+  id: string | null;
+  name: string;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const currentId =
+    getPlatformId(value) || parentId;
+
+  const names =
+    getPlatformSearchNames(value);
+
+  for (const alias of aliases) {
+    for (const name of names) {
+      if (
+        name === alias ||
+        name.includes(alias) ||
+        alias.includes(name)
+      ) {
+        const displayName =
+          getPlatformName(value);
+
+        return {
+          platform: value,
+          id: currentId,
+          name:
+            displayName ||
+            alias,
+        };
+      }
+    }
+  }
+
+  /*
+   * Search nested objects.
+   */
+  for (const key of Object.keys(value)) {
+    const child = value[key];
+
+    if (
+      child &&
+      typeof child === "object"
+    ) {
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          const result =
+            findPlatformMatchRecursive(
+              item,
+              aliases,
+              currentId
+            );
+
+          if (result) {
+            return result;
+          }
+        }
+      } else {
+        const result =
+          findPlatformMatchRecursive(
+            child,
+            aliases,
+            currentId
+          );
+
+        if (result) {
+          return result;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Match dashboard DSP against real Too Lost platform.
  *
  * IMPORTANT:
- * We return the COMPLETE Too Lost platform object,
- * not a fake ID.
+ * This function NEVER creates a fake platform ID.
  */
 function matchTooLostPlatform(
   selectedName: string,
   platforms: any[]
 ) {
-  const selectedNormalized =
-    normalizePlatformName(selectedName);
-
-  if (!selectedNormalized) {
-    return null;
-  }
-
   const aliases =
-    DSP_ALIASES[selectedNormalized] || [
-      selectedNormalized,
-    ];
+    getDSPAliases(selectedName);
 
-  const normalizedAliases =
-    aliases.map(normalizePlatformName);
+  console.log(
+    "========================================"
+  );
 
-  /*
-   * =====================================================
-   * PASS 1
-   * Exact match
-   * =====================================================
-   */
-  for (const platform of platforms) {
-    const platformNames =
-      getPlatformSearchNames(platform);
+  console.log(
+    "DSP MATCH START"
+  );
 
-    const exactMatch =
-      platformNames.some((platformName) =>
-        normalizedAliases.includes(
-          platformName
-        )
-      );
-
-    if (exactMatch) {
-      console.log(
-        "Too Lost platform EXACT matched:",
-        selectedName,
-        "=>",
-        getPlatformName(platform),
-        "ID:",
-        getPlatformId(platform)
-      );
-
-      return platform;
-    }
-  }
-
-  /*
-   * =====================================================
-   * PASS 2
-   * Partial match
-   * =====================================================
-   */
-  for (const platform of platforms) {
-    const platformNames =
-      getPlatformSearchNames(platform);
-
-    const partialMatch =
-      platformNames.some((platformName) =>
-        normalizedAliases.some(
-          (alias) =>
-            platformName.includes(alias) ||
-            alias.includes(platformName)
-        )
-      );
-
-    if (partialMatch) {
-      console.log(
-        "Too Lost platform PARTIAL matched:",
-        selectedName,
-        "=>",
-        getPlatformName(platform),
-        "ID:",
-        getPlatformId(platform)
-      );
-
-      return platform;
-    }
-  }
-
-  /*
-   * =====================================================
-   * PASS 3
-   * Token-based fallback
-   *
-   * Example:
-   * "audiomack music" -> audiomack
-   * "apple music store" -> apple
-   * =====================================================
-   */
-  const selectedTokens =
-    selectedNormalized
-      .split(/(?=[a-z])/)
-      .filter(Boolean);
-
-  for (const platform of platforms) {
-    const platformNames =
-      getPlatformSearchNames(platform);
-
-    for (const platformName of platformNames) {
-      if (
-        selectedTokens.some(
-          (token) =>
-            token.length >= 4 &&
-            platformName.includes(token)
-        )
-      ) {
-        console.log(
-          "Too Lost platform TOKEN matched:",
-          selectedName,
-          "=>",
-          getPlatformName(platform),
-          "ID:",
-          getPlatformId(platform)
-        );
-
-        return platform;
-      }
-    }
-  }
-
-  console.warn(
-    "Too Lost platform NOT matched:",
+  console.log(
+    "Dashboard DSP:",
     selectedName
   );
 
+  console.log(
+    "Normalized:",
+    normalizePlatformName(
+      selectedName
+    )
+  );
+
+  console.log(
+    "Aliases:",
+    aliases
+  );
+
+  console.log(
+    "Too Lost platform count:",
+    platforms.length
+  );
+
+  /*
+   * First pass:
+   * Search every platform recursively.
+   */
+  for (const platform of platforms) {
+    const result =
+      findPlatformMatchRecursive(
+        platform,
+        aliases
+      );
+
+    if (result) {
+      console.log(
+        "MATCH FOUND:",
+        {
+          dashboardName:
+            selectedName,
+          tooLostName:
+            result.name,
+          tooLostPlatformId:
+            result.id,
+          rawPlatform:
+            result.platform,
+        }
+      );
+
+      if (!result.id) {
+        console.warn(
+          "MATCH FOUND BUT NO PLATFORM ID:",
+          result
+        );
+      }
+
+      console.log(
+        "========================================"
+      );
+
+      /*
+       * Return original platform object
+       * plus resolved ID/name.
+       */
+      return {
+        ...result.platform,
+
+        __resolved_platform_id:
+          result.id,
+
+        __resolved_platform_name:
+          result.name,
+      };
+    }
+  }
+
   console.warn(
-    "Available Too Lost platforms:",
-    platforms.map((platform) => ({
-      id: getPlatformId(platform),
-      name: getPlatformName(platform),
+    "DSP NOT MATCHED:",
+    selectedName
+  );
+
+  console.log(
+    "Available Too Lost platforms:"
+  );
+
+  for (const platform of platforms) {
+    console.log({
+      id:
+        getPlatformId(platform),
+      name:
+        getPlatformName(platform),
       searchableNames:
-        getPlatformSearchNames(platform),
-    }))
+        getPlatformSearchNames(
+          platform
+        ),
+      raw:
+        platform,
+    });
+  }
+
+  console.log(
+    "========================================"
   );
 
   return null;
@@ -636,6 +808,10 @@ for (const selected of selectedDSPs) {
   }
 
   console.log(
+    "========================================"
+  );
+
+  console.log(
     "Trying to match DSP:",
     selectedName
   );
@@ -655,25 +831,38 @@ for (const selected of selectedDSPs) {
     continue;
   }
 
+  /*
+   * IMPORTANT:
+   * First use the ID resolved by the
+   * recursive matcher.
+   */
   const platformId =
+    matched.__resolved_platform_id ||
     getPlatformId(matched);
 
   const platformName =
+    matched.__resolved_platform_name ||
     getPlatformName(matched);
 
   if (!platformId) {
-    console.warn(
-      "Matched Too Lost platform has no ID:",
-      matched
+    console.error(
+      "Matched platform has NO Too Lost ID:",
+      {
+        selectedName,
+        matched,
+      }
     );
 
     continue;
   }
 
   if (!platformName) {
-    console.warn(
-      "Matched Too Lost platform has no name:",
-      matched
+    console.error(
+      "Matched platform has NO name:",
+      {
+        selectedName,
+        matched,
+      }
     );
 
     continue;
@@ -681,17 +870,28 @@ for (const selected of selectedDSPs) {
 
   selectedRows.push({
     release_id: id,
-    dsp_name: platformName,
-    toolost_platform_id: platformId,
-    status: "selected",
+
+    dsp_name:
+      platformName,
+
+    toolost_platform_id:
+      String(platformId),
+
+    status:
+      "selected",
   });
 
   console.log(
     "DSP SAVED:",
     {
-      dashboardName: selectedName,
-      toolostName: platformName,
-      toolostPlatformId: platformId,
+      dashboardName:
+        selectedName,
+
+      toolostName:
+        platformName,
+
+      toolostPlatformId:
+        String(platformId),
     }
   );
 }
