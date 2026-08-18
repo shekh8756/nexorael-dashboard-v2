@@ -56,83 +56,89 @@ async function updateTrackMetadata(
   accessToken: string,
   releaseId: string,
   track: any,
-  trackId?: string | number
+  trackId?: string | number,
+  audioFileKey?: string
 ) {
-  const participants: any[] = [];
+  const artists = track.artist
+    ? [
+        {
+          name: track.artist,
+          role: ["primary"],
+        },
+      ]
+    : [];
 
-  if (track.artist) {
-    participants.push({
-      name: track.artist,
-      role: ["primary"],
-    });
-  }
-
-  if (track.composer) {
-    participants.push({
-      name: track.composer,
-      role: ["composer"],
-    });
-  }
+  const writers = [];
 
   if (track.lyricist) {
-    participants.push({
+    writers.push({
       name: track.lyricist,
       role: ["lyricist"],
     });
   }
 
-  if (track.producer) {
-    participants.push({
-      name: track.producer,
-      role: ["producer"],
+  if (track.composer) {
+    writers.push({
+      name: track.composer,
+      role: ["composer"],
     });
   }
 
-  if (track.publisher) {
-    participants.push({
-      name: track.publisher,
-      role: ["publisher"],
+  if (track.writer) {
+    writers.push({
+      name: track.writer,
+      role: ["writer"],
+    });
+  }
+
+  // Too Lost requires at least one writer.
+  // If composer/lyricist/writer is not separately supplied,
+  // use the artist as a fallback writer so the API request is valid.
+  if (writers.length === 0 && track.artist) {
+    writers.push({
+      name: track.artist,
+      role: ["writer"],
     });
   }
 
   const payload: Record<string, unknown> = {
     title: track.title,
-    isrc: track.isrc,
-    version: track.version || undefined,
     language: track.language || undefined,
-    content_type: track.contentType || undefined,
+    content_type: track.contentType || "ai_music",
     explicit: Boolean(track.explicit),
-    participants,
+
+    // REQUIRED BY TOO LOST
+    audioFileKey: audioFileKey || undefined,
+    artists,
+    writers,
   };
 
-  if (trackId) payload.id = trackId;
+  if (track.isrc) {
+    payload.isrc = track.isrc;
+  }
 
-  // The Too Lost public API documents PUT /releases/{releaseId}/tracks.
-  // Use the documented collection form first, then a raw-array fallback
-  // for older sandbox API versions.
-  let result = await tooLostApi(
+  if (track.version) {
+    payload.version = track.version;
+  }
+
+  if (trackId) {
+    payload.id = trackId;
+  }
+
+  return await tooLostApi(
     accessToken,
     `/releases/${releaseId}/tracks`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tracks: [payload] }),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        tracks: [payload],
+      }),
     }
   );
-
-  if (!result.response.ok) {
-    result = await tooLostApi(
-      accessToken,
-      `/releases/${releaseId}/tracks`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify([payload]),
-      }
-    );
-  }
-
-  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -270,10 +276,12 @@ export async function POST(request: NextRequest) {
 
     if (!trackId && track?.title) {
       const metadataResult = await updateTrackMetadata(
-        accessToken,
-        String(releaseId),
-        track
-      );
+  accessToken,
+  String(releaseId),
+  track,
+  undefined,
+  upload.fileKey
+);
 
       if (!metadataResult.response.ok) {
         return NextResponse.json(
@@ -302,11 +310,12 @@ export async function POST(request: NextRequest) {
       }
     } else if (trackId && track?.title) {
       const metadataResult = await updateTrackMetadata(
-        accessToken,
-        String(releaseId),
-        track,
-        trackId
-      );
+  accessToken,
+  String(releaseId),
+  track,
+  trackId,
+  upload.fileKey
+);
 
       if (!metadataResult.response.ok) {
         return NextResponse.json(
