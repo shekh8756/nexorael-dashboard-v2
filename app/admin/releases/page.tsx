@@ -105,85 +105,139 @@ export default function AdminReleasesPage() {
   // ==========================================
 
   async function checkAdmin() {
-    try {
-      const {
-        data: userData,
-      } = await supabase.auth.getUser();
+  try {
+    const {
+      data: userData,
+      error: userError,
+    } = await supabase.auth.getUser();
 
-      if (!userData.user) {
-        router.push("/login");
-        return;
-      }
+    console.log("ADMIN AUTH USER:", userData.user);
+    console.log("ADMIN AUTH ERROR:", userError);
 
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
-        .from("profiles")
-        .select(
-          "role,status,white_label_id,full_name,email"
-        )
-        .eq("id", userData.user.id)
-        .single();
+    if (userError || !userData.user) {
+      console.error(
+        "No authenticated user:",
+        userError
+      );
 
-      if (
-        profileError ||
-        !profile
-      ) {
-        router.push("/dashboard");
-        return;
-      }
+      router.push("/login");
+      return;
+    }
 
-     const allowedRoles = [
-  "master_admin",
-  "white_label_admin",
-  "admin",
-];
+    const userId = userData.user.id;
 
-const userRole = String(
-  profile.role || ""
-).toLowerCase();
+    const {
+      data: profile,
+      error: profileError,
+    } = await supabase
+      .from("profiles")
+      .select(
+        "id,role,status,white_label_id,full_name,email"
+      )
+      .eq("id", userId)
+      .maybeSingle();
 
-const userStatus = String(
-  profile.status || ""
-).toLowerCase();
+    console.log(
+      "ADMIN PROFILE:",
+      profile
+    );
 
-if (!allowedRoles.includes(userRole)) {
-  alert(
-    `Admin access only. Current role: ${profile.role || "unknown"}`
-  );
-  router.push("/dashboard");
-  return;
-}
+    console.log(
+      "ADMIN PROFILE ERROR:",
+      profileError
+    );
 
-if (
-  userStatus &&
-  userStatus !== "active"
-) {
-  alert(
-    `Your account is not active. Current status: ${
-      profile.status || "unknown"
-    }`
-  );
-  router.push("/dashboard");
-  return;
-}
-
-      setAdminProfile(profile);
-
-      await loadReleases(profile);
-    } catch (err) {
-      console.error(err);
-
+    // Do NOT silently redirect.
+    // Show the real problem on screen.
+    if (profileError) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to verify admin."
+        `Profile query failed: ${profileError.message}`
       );
 
       setLoading(false);
+      return;
     }
+
+    if (!profile) {
+      setError(
+        `No profile found for logged-in user. User ID: ${userId}`
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    const userRole = String(
+      profile.role || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const userStatus = String(
+      profile.status || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    console.log(
+      "ADMIN ROLE:",
+      userRole
+    );
+
+    console.log(
+      "ADMIN STATUS:",
+      userStatus
+    );
+
+    const allowedRoles = [
+      "master_admin",
+      "white_label_admin",
+      "admin",
+    ];
+
+    if (
+      !allowedRoles.includes(
+        userRole
+      )
+    ) {
+      setError(
+        `Admin access denied. Your current role is "${profile.role}".`
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    if (
+      userStatus &&
+      userStatus !== "active"
+    ) {
+      setError(
+        `Admin access denied. Your account status is "${profile.status}".`
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    setAdminProfile(profile);
+
+    await loadReleases(profile);
+  } catch (err) {
+    console.error(
+      "ADMIN CHECK ERROR:",
+      err
+    );
+
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unable to verify admin."
+    );
+
+    setLoading(false);
   }
+}
 
   // ==========================================
   // LOAD RELEASES
