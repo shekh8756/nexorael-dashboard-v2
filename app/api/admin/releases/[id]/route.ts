@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,64 +14,33 @@ type Action =
 type ReleaseRow = {
   id: string;
   title?: string | null;
+  artist_name?: string | null;
   status?: string | null;
+  user_id?: string | null;
+  white_label_id?: string | null;
+  admin_note?: string | null;
   toolost_release_id?: string | number | null;
-  upc?: string | null;
-  [key: string]: unknown;
 };
 
-export async function GET(
-  request: NextRequest,
-  context: {
-    params: Promise<{ id: string }>;
-  }
-) {
-  try {
-    const { id } = await context.params;
+function getNewStatus(action: Action) {
+  switch (action) {
+    case "approve":
+      return "approved";
 
-    if (!id) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Release ID is required",
-        },
-        { status: 400 }
-      );
-    }
+    case "reject":
+      return "rejected";
 
-    const { data, error } = await supabaseAdmin
-      .from("releases")
-      .select("*")
-      .eq("id", id)
-      .single();
+    case "draft":
+      return "draft";
 
-    if (error || !data) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: error?.message || "Release not found",
-        },
-        { status: 404 }
-      );
-    }
+    case "takedown":
+      return "takedown";
 
-    return NextResponse.json({
-      success: true,
-      release: data,
-    });
-  } catch (error) {
-    console.error("Admin release GET error:", error);
+    case "submit":
+      return "pending";
 
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to load release",
-      },
-      { status: 500 }
-    );
+    default:
+      return null;
   }
 }
 
@@ -90,7 +57,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           success: false,
-          error: "Release ID is required",
+          error: "Release ID is required.",
         },
         { status: 400 }
       );
@@ -98,9 +65,11 @@ export async function PATCH(
 
     const body = await request.json();
 
-    const action = String(
-      body?.action || ""
-    ).toLowerCase() as Action;
+    const action = body?.action as Action;
+    const note =
+      typeof body?.note === "string"
+        ? body.note.trim()
+        : "";
 
     const allowedActions: Action[] = [
       "approve",
@@ -114,375 +83,129 @@ export async function PATCH(
       return NextResponse.json(
         {
           success: false,
-          error:
-            "Invalid action. Allowed: approve, reject, draft, takedown, submit",
+          error: "Invalid release action.",
         },
         { status: 400 }
       );
     }
 
     /*
-     * Get release
+     * Reject and takedown require a reason.
      */
-
-    const { data: release, error: releaseError } =
-      await supabaseAdmin
-        .from("releases")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-    if (releaseError || !release) {
+    if (
+      (action === "reject" || action === "takedown") &&
+      !note
+    ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            releaseError?.message ||
-            "Release not found",
+            action === "reject"
+              ? "Rejection reason is required."
+              : "Takedown reason is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * Find release.
+     */
+    const { data: release, error: releaseError } =
+      await supabaseAdmin
+        .from("releases")
+        .select(
+          `
+          id,
+          title,
+          artist_name,
+          status,
+          user_id,
+          white_label_id,
+          admin_note,
+          toolost_release_id
+        `
+        )
+        .eq("id", id)
+        .maybeSingle();
+
+    if (releaseError) {
+      console.error(
+        "Release lookup error:",
+        releaseError
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: releaseError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!release) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Release not found.",
         },
         { status: 404 }
       );
     }
 
-    const currentRelease =
-      release as ReleaseRow;
-
-    const currentStatus = String(
-      currentRelease.status || ""
-    ).toLowerCase();
+    const releaseRow = release as ReleaseRow;
 
     /*
-     * Admin note
+     * Convert action to database status.
      */
+    const newStatus = getNewStatus(action);
 
-    const note =
-      typeof body?.note === "string"
-        ? body.note.trim()
-        : "";
+    if (!newStatus) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unable to determine release status.",
+        },
+        { status: 400 }
+      );
+    }
 
     /*
-     * =====================================================
-     * SUBMIT TO TOO LOST
-     * =====================================================
+     * Build admin note.
+     *
+     * For approve/draft/submit we allow an optional note.
+     * For reject/takedown the supplied note becomes the reason.
      */
+    let adminNote = note || null;
 
-    if (action === "submit") {
-      /*
-       * Only draft releases can be submitted
-       */
+    if (
+      action === "reject" &&
+      !adminNote
+    ) {
+      adminNote = "Release rejected by admin.";
+    }
 
-      if (currentStatus !== "draft") {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Only draft releases can be submitted.",
-            currentStatus,
-          },
-          { status: 400 }
-        );
-      }
+    if (
+      action === "takedown" &&
+      !adminNote
+    ) {
+      adminNote = "Release taken down by admin.";
+    }
 
-      /*
-       * Too Lost release ID is required
-       */
-
-      const toolostReleaseId =
-        currentRelease.toolost_release_id;
-
-      if (!toolostReleaseId) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "This release does not have a Too Lost release ID.",
-            releaseId: id,
-          },
-          { status: 400 }
-        );
-      }
-
-      /*
-       * Get Too Lost OAuth token
-       */
-
-      const cookieStore = await cookies();
-
-      const accessToken =
-        cookieStore.get(
-          "toolost_access_token"
-        )?.value;
-
-      if (!accessToken) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost is not connected. Please connect Too Lost first.",
-          },
-          { status: 401 }
-        );
-      }
-
-      console.log(
-        "Admin submitting release to Too Lost:",
-        {
-          localReleaseId: id,
-          toolostReleaseId,
-        }
-      );
-
-      /*
-       * Call Too Lost
-       */
-
-      const result = await tooLostApi(
-        String(accessToken),
-        `/releases/${toolostReleaseId}/submit`,
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      console.log(
-        "Too Lost submit status:",
-        result.response.status
-      );
-
-      console.log(
-        "Too Lost submit response:",
-        result.data
-      );
-
-      /*
-       * Do NOT change our database if Too Lost rejected it.
-       */
-
-      if (!result.response.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            action: "submit",
-            status: result.response.status,
-            error:
-              typeof result.data === "object" &&
-              result.data !== null &&
-              "message" in result.data
-                ? String(
-                    (
-                      result.data as {
-                        message?: unknown;
-                      }
-                    ).message || "Too Lost rejected submission."
-                  )
-                : "Too Lost rejected submission.",
-            tooLostResponse:
-              result.data,
-          },
-          {
-            status:
-              result.response.status >= 400
-                ? result.response.status
-                : 502,
-          }
-        );
-      }
-
-      /*
-       * Too Lost accepted the submission.
-       *
-       * Now update our database.
-       */
-
-      const updateData: Record<
-        string,
-        unknown
-      > = {
-        status: "pending",
-      };
-
-      if (note) {
-        updateData.admin_note = note;
-      }
-
-      let {
-        data: updatedRelease,
-        error: updateError,
-      } = await supabaseAdmin
+    /*
+     * Update release.
+     */
+    const { data: updatedRelease, error: updateError } =
+      await supabaseAdmin
         .from("releases")
-        .update(updateData)
+        .update({
+          status: newStatus,
+          admin_note: adminNote,
+        })
         .eq("id", id)
         .select("*")
         .single();
-
-      /*
-       * Retry if admin_note column doesn't exist
-       */
-
-      if (
-        updateError &&
-        note &&
-        updateError.message
-          .toLowerCase()
-          .includes("admin_note")
-      ) {
-        delete updateData.admin_note;
-
-        const retry =
-          await supabaseAdmin
-            .from("releases")
-            .update(updateData)
-            .eq("id", id)
-            .select("*")
-            .single();
-
-        updatedRelease = retry.data;
-        updateError = retry.error;
-      }
-
-      if (updateError) {
-        console.error(
-          "Database update after Too Lost submission failed:",
-          updateError
-        );
-
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost accepted the release, but our database status could not be updated.",
-            databaseError:
-              updateError.message,
-            tooLostResponse:
-              result.data,
-          },
-          { status: 500 }
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        action: "submit",
-        previousStatus: currentStatus,
-        newStatus: "pending",
-        release: updatedRelease,
-        toolostReleaseId,
-        tooLostResponse:
-          result.data,
-        message:
-          "Release successfully submitted to Too Lost and moved to Pending Review.",
-      });
-    }
-
-    /*
-     * =====================================================
-     * OTHER ADMIN ACTIONS
-     * =====================================================
-     */
-
-    let newStatus: string;
-
-    switch (action) {
-      case "draft":
-        newStatus = "draft";
-        break;
-
-      case "approve":
-        newStatus = "approved";
-        break;
-
-      case "reject":
-        newStatus = "rejected";
-        break;
-
-      case "takedown":
-        newStatus = "takedown";
-        break;
-
-      default:
-        newStatus =
-          currentRelease.status || "draft";
-    }
-
-    /*
-     * Require reason for rejection
-     */
-
-    if (action === "reject" && !note) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Please provide a rejection reason.",
-        },
-        { status: 400 }
-      );
-    }
-
-    /*
-     * Require reason for takedown
-     */
-
-    if (action === "takedown" && !note) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Please provide a takedown reason.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const updateData: Record<
-      string,
-      unknown
-    > = {
-      status: newStatus,
-    };
-
-    if (note) {
-      updateData.admin_note = note;
-    }
-
-    let {
-      data: updatedRelease,
-      error: updateError,
-    } = await supabaseAdmin
-      .from("releases")
-      .update(updateData)
-      .eq("id", id)
-      .select("*")
-      .single();
-
-    /*
-     * Retry without admin_note if column doesn't exist
-     */
-
-    if (
-      updateError &&
-      note &&
-      updateError.message
-        .toLowerCase()
-        .includes("admin_note")
-    ) {
-      delete updateData.admin_note;
-
-      const retry =
-        await supabaseAdmin
-          .from("releases")
-          .update(updateData)
-          .eq("id", id)
-          .select("*")
-          .single();
-
-      updatedRelease = retry.data;
-      updateError = retry.error;
-    }
 
     if (updateError) {
       console.error(
@@ -494,23 +217,85 @@ export async function PATCH(
         {
           success: false,
           error: updateError.message,
-          action,
         },
         { status: 500 }
       );
     }
 
+    /*
+     * Optional notification.
+     *
+     * Notification failure should NOT make the release
+     * action fail.
+     */
+    if (releaseRow.user_id) {
+      try {
+        await supabaseAdmin
+          .from("notifications")
+          .insert({
+            user_id: releaseRow.user_id,
+            title: getNotificationTitle(action),
+            message: getNotificationMessage(
+              releaseRow.title || "Untitled",
+              newStatus,
+              note
+            ),
+            type: newStatus,
+            is_read: false,
+          });
+      } catch (notificationError) {
+        console.error(
+          "Notification error:",
+          notificationError
+        );
+      }
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * "submit" currently changes the release to
+     * "pending".
+     *
+     * We are NOT calling a fake Too Lost endpoint here.
+     * The actual Too Lost submission endpoint must be
+     * connected once the exact API endpoint/documentation
+     * is available.
+     */
+
+    let message = "";
+
+    switch (action) {
+      case "approve":
+        message = "Release approved successfully.";
+        break;
+
+      case "reject":
+        message = "Release rejected successfully.";
+        break;
+
+      case "draft":
+        message = "Release moved back to draft.";
+        break;
+
+      case "takedown":
+        message = "Release marked for takedown.";
+        break;
+
+      case "submit":
+        message =
+          "Release submitted for review successfully.";
+        break;
+
+      default:
+        message = "Release updated successfully.";
+    }
+
     return NextResponse.json({
       success: true,
-      action,
-      previousStatus: currentStatus,
-      newStatus,
+      message,
       release: updatedRelease,
-      toolostReleaseId:
-        currentRelease.toolost_release_id ||
-        null,
-      message:
-        `Release ${action} action completed successfully.`,
+      status: newStatus,
     });
   } catch (error) {
     console.error(
@@ -524,9 +309,45 @@ export async function PATCH(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to process release action",
+            : "Internal server error.",
       },
       { status: 500 }
     );
   }
+}
+
+function getNotificationTitle(action: Action) {
+  switch (action) {
+    case "approve":
+      return "Release Approved";
+
+    case "reject":
+      return "Release Rejected";
+
+    case "draft":
+      return "Release Moved to Draft";
+
+    case "takedown":
+      return "Release Takedown";
+
+    case "submit":
+      return "Release Submitted";
+
+    default:
+      return "Release Updated";
+  }
+}
+
+function getNotificationMessage(
+  title: string,
+  status: string,
+  note: string
+) {
+  let message = `Your release "${title}" status has been updated to ${status}.`;
+
+  if (note) {
+    message += ` Admin note: ${note}`;
+  }
+
+  return message;
 }
