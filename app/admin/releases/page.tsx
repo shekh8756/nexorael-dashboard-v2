@@ -356,57 +356,69 @@ export default function AdminReleasesPage() {
   // OPEN DSP SELECTOR
   // ==========================================
 
-  async function openDSPSelector(
-    release: Release
-  ) {
-    setSelectedRelease(release);
-    setSelectedDSPs([]);
-    setExistingDSPs([]);
-    setLoadingDSPs(true);
+async function openDSPSelector(
+  release: Release
+) {
+  setSelectedRelease(release);
+  setSelectedDSPs([]);
+  setExistingDSPs([]);
+  setLoadingDSPs(true);
 
-    try {
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("dsp_deliveries")
-        .select("*")
-        .eq("release_id", release.id)
-        .order("created_at", {
-          ascending: false,
-        });
-
-      if (error) {
-        throw new Error(error.message);
+  try {
+    const response = await fetch(
+      `/api/admin/releases/${release.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          action: "get_dsps",
+        }),
       }
+    );
 
-      const rows =
-        (data || []) as DSPDelivery[];
+    const data =
+      await response.json();
 
-      setExistingDSPs(rows);
-
-      const names = rows
-        .map(
-          (row) =>
-            row.dsp_name ||
-            row.dsp ||
-            row.platform
-        )
-        .filter(Boolean) as string[];
-
-      setSelectedDSPs(names);
-    } catch (err) {
-      console.error(err);
-
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Failed to load DSPs."
+    if (
+      !response.ok ||
+      !data.success
+    ) {
+      throw new Error(
+        data.error ||
+          "Unable to load DSPs."
       );
-    } finally {
-      setLoadingDSPs(false);
     }
+
+    setExistingDSPs(
+      data.selected || []
+    );
+
+    setSelectedDSPs(
+      (data.selected || [])
+        .map(
+          (item: DSPDelivery) =>
+            item.dsp_name ||
+            item.dsp ||
+            item.platform ||
+            ""
+        )
+        .filter(Boolean)
+    );
+  } catch (error) {
+    console.error(error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to load DSPs."
+    );
+  } finally {
+    setLoadingDSPs(false);
   }
+}
 
   // ==========================================
   // TOGGLE DSP
@@ -441,82 +453,60 @@ export default function AdminReleasesPage() {
   // SAVE DSP SELECTION
   // ==========================================
 
-  async function saveDSPSelection() {
-    if (!selectedRelease) return;
+  async function saveDSPs() {
+  if (!selectedRelease) return;
 
-    if (selectedDSPs.length === 0) {
-      alert(
-        "Please select at least one DSP."
-      );
-      return;
-    }
-
-    setSavingDSPs(true);
-
-    try {
-      const existingNames =
-        existingDSPs
-          .map(
-            (item) =>
-              item.dsp_name ||
-              item.dsp ||
-              item.platform
-          )
-          .filter(Boolean);
-
-      const newDSPs =
-        selectedDSPs.filter(
-          (dsp) =>
-            !existingNames.includes(dsp)
-        );
-
-      if (newDSPs.length === 0) {
-        alert(
-          "All selected DSPs are already saved."
-        );
-        return;
-      }
-
-      const rows = newDSPs.map(
-        (dsp) => ({
-          release_id:
-            selectedRelease.id,
-
-          dsp_name: dsp,
-
-          status: "pending",
-        })
-      );
-
-      const {
-        error,
-      } = await supabase
-        .from("dsp_deliveries")
-        .insert(rows);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      alert(
-        `${newDSPs.length} DSP(s) saved successfully.`
-      );
-
-      await openDSPSelector(
-        selectedRelease
-      );
-    } catch (err) {
-      console.error(err);
-
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Failed to save DSP selection."
-      );
-    } finally {
-      setSavingDSPs(false);
-    }
+  if (selectedDSPs.length === 0) {
+    alert("Please select at least one DSP.");
+    return;
   }
+
+  setSavingDSPs(true);
+
+  try {
+    const response = await fetch(
+      `/api/admin/releases/${selectedRelease.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          action: "save_dsps",
+          dsps: selectedDSPs,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+          "Unable to save DSP selection."
+      );
+    }
+
+    setExistingDSPs(
+      data.deliveries || []
+    );
+
+    alert(
+      "DSP selection saved successfully."
+    );
+  } catch (error) {
+    console.error(error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to save DSPs."
+    );
+  } finally {
+    setSavingDSPs(false);
+  }
+}
 
   // ==========================================
   // RELEASE ACTION
@@ -1451,9 +1441,7 @@ export default function AdminReleasesPage() {
 
                       <button
                         type="button"
-                        onClick={
-                          saveDSPSelection
-                        }
+                        onClick={saveDSPs}
                         disabled={
                           savingDSPs ||
                           selectedDSPs.length ===
