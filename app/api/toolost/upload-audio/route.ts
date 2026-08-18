@@ -6,14 +6,13 @@ import { spawn } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 /* =========================================================
-   FIND UPLOAD DATA FROM TOO LOST
+   FIND TOO LOST UPLOAD DATA
 ========================================================= */
 
 function findUploadData(value: any): {
@@ -81,37 +80,31 @@ function unwrap(value: any) {
 }
 
 /* =========================================================
-   SAFE FILE NAME
+   NORMALIZE FILE NAME
 ========================================================= */
 
 function normalizeFileName(fileName: string): string {
   let name = String(fileName || "").trim();
 
-  // Remove folder/path
   name = name.split(/[\\/]/).pop() || "audio";
 
-  // Remove extension
   name = name.replace(/\.[^.]+$/, "");
 
-  // Replace unsupported characters
   name = name.replace(/[^a-zA-Z0-9_-]+/g, "_");
 
-  // Remove repeated underscores
   name = name.replace(/_+/g, "_");
 
-  // Remove leading/trailing underscores
   name = name.replace(/^_+|_+$/g, "");
 
   if (!name) {
     name = "audio";
   }
 
-  // Too Lost requires .flac
   return `${name}.flac`;
 }
 
 /* =========================================================
-   CONVERT WAV BUFFER TO REAL FLAC
+   WAV → FLAC
 ========================================================= */
 
 async function convertWavToFlac(
@@ -146,18 +139,14 @@ async function convertWavToFlac(
     await new Promise<void>((resolve, reject) => {
       const args = [
         "-y",
-
         "-i",
         inputPath,
 
-        // Audio only
         "-vn",
 
-        // Real FLAC encoding
         "-c:a",
         "flac",
 
-        // Good lossless compression
         "-compression_level",
         "5",
 
@@ -238,24 +227,70 @@ async function updateTrackMetadata(
   trackId?: string | number,
   audioFileKey?: string
 ) {
-  const artists: any[] = [];
-  const writers: any[] = [];
-
-  /* ---------------- ARTIST ---------------- */
-
-  if (track?.artist) {
-    artists.push({
-      name: String(
-        track.artist
-      ).trim(),
-
-      role: [
-        "primary",
-      ],
-    });
+  if (!track?.title) {
+    throw new Error(
+      "Track title is required."
+    );
   }
 
-  /* ---------------- WRITERS ---------------- */
+  if (!track?.artist) {
+    throw new Error(
+      "Track artist is required."
+    );
+  }
+
+  /*
+   * IMPORTANT:
+   * Too Lost requires a composer credit.
+   */
+
+  if (!track?.composer) {
+    throw new Error(
+      "Composer is required. Please enter a composer before uploading."
+    );
+  }
+
+  if (!audioFileKey) {
+    throw new Error(
+      "Audio file key is required before creating the track."
+    );
+  }
+
+  const artists: any[] = [];
+
+  const writers: any[] = [];
+
+  /* =======================================================
+     PRIMARY ARTIST
+  ======================================================= */
+
+  artists.push({
+    name: String(
+      track.artist
+    ).trim(),
+
+    role: [
+      "primary",
+    ],
+  });
+
+  /* =======================================================
+     COMPOSER
+  ======================================================= */
+
+  writers.push({
+    name: String(
+      track.composer
+    ).trim(),
+
+    role: [
+      "composer",
+    ],
+  });
+
+  /* =======================================================
+     LYRICIST
+  ======================================================= */
 
   if (track?.lyricist) {
     writers.push({
@@ -269,19 +304,14 @@ async function updateTrackMetadata(
     });
   }
 
-  if (track?.composer) {
-    writers.push({
-      name: String(
-        track.composer
-      ).trim(),
+  /* =======================================================
+     WRITER
+  ======================================================= */
 
-      role: [
-        "composer",
-      ],
-    });
-  }
-
-  if (track?.writer) {
+  if (
+    track?.writer &&
+    String(track.writer).trim()
+  ) {
     writers.push({
       name: String(
         track.writer
@@ -293,66 +323,32 @@ async function updateTrackMetadata(
     });
   }
 
-  /*
-   * Too Lost requires at least one writer.
-   */
-  if (
-    writers.length === 0 &&
-    track?.artist
-  ) {
-    writers.push({
-      name: String(
-        track.artist
-      ).trim(),
-
-      role: [
-        "writer",
-      ],
-    });
-  }
-
-  if (!audioFileKey) {
-    throw new Error(
-      "audioFileKey is required before creating the Too Lost track."
-    );
-  }
-
-  if (artists.length === 0) {
-    throw new Error(
-      "At least one artist is required."
-    );
-  }
-
-  if (writers.length === 0) {
-    throw new Error(
-      "At least one writer is required."
-    );
-  }
+  /* =======================================================
+     PAYLOAD
+  ======================================================= */
 
   const payload: Record<
     string,
     unknown
   > = {
     title:
-      track?.title ||
-      "Untitled",
+      String(
+        track.title
+      ).trim(),
 
     language:
-      track?.language ||
+      track.language ||
       "Hindi",
 
     content_type:
-      track?.contentType ||
+      track.contentType ||
       "ai_music",
 
     explicit:
       Boolean(
-        track?.explicit
+        track.explicit
       ),
 
-    /*
-     * REQUIRED BY TOO LOST
-     */
     audioFileKey,
 
     artists,
@@ -362,12 +358,12 @@ async function updateTrackMetadata(
 
   if (track?.isrc) {
     payload.isrc =
-      track.isrc;
+      String(track.isrc).trim();
   }
 
   if (track?.version) {
     payload.version =
-      track.version;
+      String(track.version).trim();
   }
 
   if (trackId) {
@@ -376,7 +372,7 @@ async function updateTrackMetadata(
   }
 
   console.log(
-    "Sending Too Lost track metadata:",
+    "TOO LOST TRACK PAYLOAD:",
     JSON.stringify(
       payload,
       null,
@@ -386,9 +382,7 @@ async function updateTrackMetadata(
 
   return await tooLostApi(
     accessToken,
-
     `/releases/${releaseId}/tracks`,
-
     {
       method: "PUT",
 
@@ -417,9 +411,9 @@ export async function POST(
   request: NextRequest
 ) {
   try {
-    /* =====================================================
-       1. GET ACCESS TOKEN
-    ===================================================== */
+    /* =======================================================
+       1. ACCESS TOKEN
+    ======================================================= */
 
     const cookieStore =
       await cookies();
@@ -442,9 +436,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       2. READ BODY
-    ===================================================== */
+    /* =======================================================
+       2. REQUEST BODY
+    ======================================================= */
 
     const body =
       await request.json();
@@ -456,20 +450,16 @@ export async function POST(
       track,
     } = body;
 
-    /* =====================================================
-       3. VALIDATE
-    ===================================================== */
+    /* =======================================================
+       3. VALIDATION
+    ======================================================= */
 
-    if (
-      !releaseId ||
-      !fileName ||
-      !audioUrl
-    ) {
+    if (!releaseId) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "releaseId, fileName and audioUrl are required.",
+            "releaseId is required.",
         },
         {
           status: 400,
@@ -477,9 +467,35 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       4. DOWNLOAD ORIGINAL WAV
-    ===================================================== */
+    if (!fileName) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "fileName is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!audioUrl) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "audioUrl is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /* =======================================================
+       4. DOWNLOAD WAV FROM SUPABASE
+    ======================================================= */
 
     console.log(
       "Downloading WAV from Supabase..."
@@ -494,9 +510,7 @@ export async function POST(
         }
       );
 
-    if (
-      !sourceResponse.ok
-    ) {
+    if (!sourceResponse.ok) {
       return NextResponse.json(
         {
           success: false,
@@ -521,9 +535,7 @@ export async function POST(
         wavArrayBuffer
       );
 
-    if (
-      !wavBuffer.length
-    ) {
+    if (!wavBuffer.length) {
       return NextResponse.json(
         {
           success: false,
@@ -544,9 +556,9 @@ export async function POST(
       `Downloaded WAV: ${wavBuffer.length} bytes`
     );
 
-    /* =====================================================
-       5. CONVERT WAV → REAL FLAC
-    ===================================================== */
+    /* =======================================================
+       5. WAV → FLAC
+    ======================================================= */
 
     console.log(
       "Converting WAV to FLAC..."
@@ -559,7 +571,9 @@ export async function POST(
         await convertWavToFlac(
           wavBuffer
         );
-    } catch (conversionError) {
+    } catch (
+      conversionError
+    ) {
       console.error(
         "WAV → FLAC conversion failed:",
         conversionError
@@ -573,7 +587,8 @@ export async function POST(
             "wav_to_flac",
 
           error:
-            conversionError instanceof Error
+            conversionError instanceof
+            Error
               ? conversionError.message
               : "WAV to FLAC conversion failed.",
         },
@@ -587,42 +602,25 @@ export async function POST(
       `FLAC created: ${flacBuffer.length} bytes`
     );
 
-    /* =====================================================
-       6. CREATE VALID FLAC FILE NAME
-    ===================================================== */
+    /* =======================================================
+       6. FLAC FILE NAME
+    ======================================================= */
 
     const flacFileName =
       normalizeFileName(
         String(fileName)
       );
 
-    /*
-     * Too Lost documentation requires:
-     *
-     * kind = audio
-     * contentType = audio/flac
-     * fileName = *.flac
-     */
-
     const tooLostContentType =
       "audio/flac";
 
-    console.log(
-      "Too Lost upload request:",
-      {
-        releaseId,
-        fileName:
-          flacFileName,
-        contentType:
-          tooLostContentType,
-        kind:
-          "audio",
-      }
-    );
+    /* =======================================================
+       7. CREATE SIGNED UPLOAD URL
+    ======================================================= */
 
-    /* =====================================================
-       7. GET SIGNED UPLOAD URL
-    ===================================================== */
+    console.log(
+      "Requesting Too Lost upload URL..."
+    );
 
     const uploadUrlResult =
       await tooLostApi(
@@ -642,27 +640,28 @@ export async function POST(
               "application/json",
           },
 
-          body: JSON.stringify({
-            kind:
-              "audio",
+          body:
+            JSON.stringify({
+              kind:
+                "audio",
 
-            fileName:
-              flacFileName,
+              fileName:
+                flacFileName,
 
-            contentType:
-              tooLostContentType,
-          }),
+              contentType:
+                tooLostContentType,
+            }),
         }
       );
+
+    console.log(
+      "Too Lost upload URL response:",
+      uploadUrlResult.data
+    );
 
     if (
       !uploadUrlResult.response.ok
     ) {
-      console.error(
-        "Too Lost upload-url rejected:",
-        uploadUrlResult.data
-      );
-
       return NextResponse.json(
         {
           success: false,
@@ -672,12 +671,6 @@ export async function POST(
 
           status:
             uploadUrlResult.response.status,
-
-          fileName:
-            flacFileName,
-
-          contentType:
-            tooLostContentType,
 
           tooLostResponse:
             uploadUrlResult.data,
@@ -689,9 +682,9 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       8. EXTRACT SIGNED URL
-    ===================================================== */
+    /* =======================================================
+       8. EXTRACT UPLOAD DATA
+    ======================================================= */
 
     const upload =
       findUploadData(
@@ -726,18 +719,13 @@ export async function POST(
       );
     }
 
-    console.log(
-      "Too Lost upload URL received."
-    );
+    /* =======================================================
+       9. UPLOAD FLAC TO SIGNED URL
+    ======================================================= */
 
     console.log(
-      "Too Lost fileKey:",
-      upload.fileKey
+      "Uploading FLAC to Too Lost..."
     );
-
-    /* =====================================================
-       9. UPLOAD REAL FLAC TO SIGNED URL
-    ===================================================== */
 
     const uploadHeaders =
       new Headers(
@@ -745,28 +733,28 @@ export async function POST(
           {}
       );
 
-    /*
-     * The signed URL requires FLAC.
-     */
     uploadHeaders.set(
       "Content-Type",
       tooLostContentType
     );
 
-    const binaryUpload = await fetch(
-  upload.uploadUrl,
-  {
-    method:
-      upload.method ||
-      "PUT",
+    const binaryUpload =
+      await fetch(
+        upload.uploadUrl,
+        {
+          method:
+            upload.method ||
+            "PUT",
 
-    headers:
-      uploadHeaders,
+          headers:
+            uploadHeaders,
 
-    body:
-      new Uint8Array(flacBuffer),
-  }
-);
+          body:
+            new Uint8Array(
+              flacBuffer
+            ),
+        }
+      );
 
     const uploadResponseText =
       await binaryUpload.text();
@@ -775,7 +763,7 @@ export async function POST(
       !binaryUpload.ok
     ) {
       console.error(
-        "Too Lost FLAC binary upload failed:",
+        "Too Lost FLAC upload failed:",
         {
           status:
             binaryUpload.status,
@@ -811,12 +799,12 @@ export async function POST(
     }
 
     console.log(
-      "FLAC uploaded successfully to Too Lost."
+      "FLAC uploaded successfully."
     );
 
-    /* =====================================================
+    /* =======================================================
        10. GET EXISTING TRACKS
-    ===================================================== */
+    ======================================================= */
 
     const tracksResult =
       await tooLostApi(
@@ -853,102 +841,156 @@ export async function POST(
     let trackId =
       currentTrack?.id;
 
-    /* =====================================================
+    /* =======================================================
        11. CREATE / UPDATE TRACK
-    ===================================================== */
+    ======================================================= */
 
-    if (
-      track?.title
-    ) {
-      const metadataResult =
-        await updateTrackMetadata(
-          accessToken,
+    if (!track?.title) {
+      return NextResponse.json(
+        {
+          success: false,
 
-          String(
-            releaseId
-          ),
+          step:
+            "track_metadata",
 
-          track,
-
-          trackId,
-
-          upload.fileKey
-        );
-
-      if (
-        !metadataResult.response.ok
-      ) {
-        console.error(
-          "Too Lost rejected track metadata:",
-          metadataResult.data
-        );
-
-        return NextResponse.json(
-          {
-            success: false,
-
-            step:
-              "track_metadata",
-
-            status:
-              metadataResult.response.status,
-
-            error:
-              "Too Lost rejected track metadata.",
-
-            tooLostResponse:
-              metadataResult.data,
-
-            fileKey:
-              upload.fileKey,
-          },
-          {
-            status:
-              metadataResult.response.status,
-          }
-        );
-      }
-
-      /* =================================================
-         GET TRACK ID AGAIN
-      ================================================= */
-
-      const refreshed =
-        await tooLostApi(
-          accessToken,
-
-          `/releases/${releaseId}/tracks`,
-
-          {
-            method:
-              "GET",
-          }
-        );
-
-      const refreshedTracks =
-        unwrap(
-          refreshed.data
-        );
-
-      if (
-        Array.isArray(
-          refreshedTracks
-        ) &&
-        refreshedTracks.length
-      ) {
-        currentTrack =
-          refreshedTracks[
-            refreshedTracks.length - 1
-          ];
-
-        trackId =
-          currentTrack?.id;
-      }
+          error:
+            "Track title is required.",
+        },
+        {
+          status: 400,
+        }
+      );
     }
 
-    /* =====================================================
-       12. CHECK TRACK ID
-    ===================================================== */
+    if (!track?.artist) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "track_metadata",
+
+          error:
+            "Track artist is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * Composer is mandatory because Too Lost
+     * is showing "A composer credit is required".
+     */
+
+    if (!track?.composer) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "track_metadata",
+
+          error:
+            "Composer is required. Please enter composer name.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const metadataResult =
+      await updateTrackMetadata(
+        accessToken,
+
+        String(
+          releaseId
+        ),
+
+        track,
+
+        trackId,
+
+        upload.fileKey
+      );
+
+    if (
+      !metadataResult.response.ok
+    ) {
+      console.error(
+        "Too Lost rejected track metadata:",
+        metadataResult.data
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "track_metadata",
+
+          status:
+            metadataResult.response.status,
+
+          error:
+            "Too Lost rejected track metadata.",
+
+          tooLostResponse:
+            metadataResult.data,
+
+          fileKey:
+            upload.fileKey,
+
+          trackId,
+        },
+        {
+          status:
+            metadataResult.response.status,
+        }
+      );
+    }
+
+    /* =======================================================
+       12. GET TRACK ID AGAIN
+    ======================================================= */
+
+    const refreshed =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks`,
+
+        {
+          method:
+            "GET",
+        }
+      );
+
+    const refreshedTracks =
+      unwrap(
+        refreshed.data
+      );
+
+    if (
+      Array.isArray(
+        refreshedTracks
+      ) &&
+      refreshedTracks.length
+    ) {
+      currentTrack =
+        refreshedTracks[
+          refreshedTracks.length - 1
+        ];
+
+      trackId =
+        currentTrack?.id;
+    }
+
+    /* =======================================================
+       13. TRACK ID REQUIRED
+    ======================================================= */
 
     if (!trackId) {
       return NextResponse.json(
@@ -959,7 +1001,7 @@ export async function POST(
             "track",
 
           error:
-            "Too Lost did not return a track ID after metadata creation.",
+            "Too Lost did not return a track ID after track creation.",
 
           fileKey:
             upload.fileKey,
@@ -970,9 +1012,14 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       13. ATTACH FLAC FILE
-    ===================================================== */
+    /* =======================================================
+       14. ATTACH FLAC FILE
+    ======================================================= */
+
+    console.log(
+      "Attaching FLAC to track:",
+      trackId
+    );
 
     const attachResult =
       await tooLostApi(
@@ -1039,17 +1086,16 @@ export async function POST(
       );
     }
 
-    /* =====================================================
-       14. SUCCESS
-    ===================================================== */
+    /* =======================================================
+       15. SUCCESS
+    ======================================================= */
 
     console.log(
-      "Too Lost release track upload completed successfully."
+      "Too Lost audio upload completed successfully."
     );
 
     return NextResponse.json({
-      success:
-        true,
+      success: true,
 
       releaseId,
 
@@ -1084,8 +1130,7 @@ export async function POST(
 
     return NextResponse.json(
       {
-        success:
-          false,
+        success: false,
 
         error:
           error instanceof Error
