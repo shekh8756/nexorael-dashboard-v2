@@ -5,82 +5,132 @@ import { tooLostApi } from "@/lib/toolost";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function PATCH(request: NextRequest) {
+/**
+ * Proxies release metadata updates to Too Lost.
+ *
+ * Route location:
+ * app/api/toolost/releases/metadata/route.ts
+ *
+ * Too Lost endpoint:
+ * PATCH /releases/{releaseId}/metadata
+ *
+ * Important: Too Lost uses camelCase metadata keys and the artwork field
+ * is `coverUrl`, not artwork_url / artwork / cover_url.
+ */
+export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies();
-
-    const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
+    const accessToken = cookieStore.get("toolost_access_token")?.value;
 
     if (!accessToken) {
       return NextResponse.json(
         {
           success: false,
-          error: "Too Lost is not connected",
+          error: "Too Lost is not connected. Please connect Too Lost first.",
         },
         { status: 401 }
       );
     }
 
-    const body = await request.json();
+    let body: any;
 
-    const {
-      releaseId,
-      artworkUrl,
-      metadata,
-    } = body;
-
-    if (!releaseId) {
+    try {
+      body = await request.json();
+    } catch {
       return NextResponse.json(
-        {
-          success: false,
-          error: "releaseId is required",
-        },
+        { success: false, error: "Invalid JSON request body." },
         { status: 400 }
       );
     }
 
-    /*
-     * Too Lost API documentation:
-     *
-     * coverUrl = release artwork URL
-     *
-     * DO NOT use:
-     * artwork_url
-     * artwork
-     * cover_url
-     */
+    const releaseId = body?.releaseId;
+    const artworkUrl = body?.artworkUrl;
+    const incomingMetadata =
+      body?.metadata && typeof body.metadata === "object"
+        ? body.metadata
+        : {};
 
-    const patch: Record<string, unknown> = {
-      ...(metadata || {}),
-    };
-
-    if (artworkUrl) {
-      patch.coverUrl = String(artworkUrl).trim();
+    if (!releaseId) {
+      return NextResponse.json(
+        { success: false, error: "releaseId is required." },
+        { status: 400 }
+      );
     }
 
-    console.log("Too Lost metadata PATCH:", {
-      releaseId,
-      coverUrl: patch.coverUrl,
-      metadata,
-    });
+    if (!artworkUrl && !incomingMetadata.coverUrl) {
+      return NextResponse.json(
+        { success: false, error: "artworkUrl / coverUrl is required." },
+        { status: 400 }
+      );
+    }
+
+    // Build the exact Too Lost release metadata payload.
+    // Do not send snake_case artwork fields.
+    const metadata: Record<string, unknown> = {
+      ...incomingMetadata,
+      ...(artworkUrl ? { coverUrl: artworkUrl } : {}),
+    };
+
+    // Remove legacy/wrong field names if an older frontend sends them.
+    delete metadata.genre;
+    delete metadata.subgenre;
+    delete metadata.release_date;
+    delete metadata.original_release_date;
+    delete metadata.catalog_number;
+    delete metadata.artwork;
+    delete metadata.artwork_url;
+    delete metadata.cover_url;
+
+    if (!metadata.primaryGenre && body?.metadata?.genre) {
+      metadata.primaryGenre = body.metadata.genre;
+    }
+
+    if (!metadata.secondaryGenre && body?.metadata?.subgenre) {
+      metadata.secondaryGenre = body.metadata.subgenre;
+    }
+
+    if (!metadata.releaseDate && body?.metadata?.release_date) {
+      metadata.releaseDate = body.metadata.release_date;
+    }
+
+    if (
+      !metadata.originalReleaseDate &&
+      body?.metadata?.original_release_date
+    ) {
+      metadata.originalReleaseDate =
+        body.metadata.original_release_date;
+    }
+
+    console.log(
+      "Too Lost metadata update:",
+      JSON.stringify(
+        {
+          releaseId: String(releaseId),
+          metadata,
+        },
+        null,
+        2
+      )
+    );
 
     const result = await tooLostApi(
       accessToken,
-      `/releases/${releaseId}/metadata`,
+      `/releases/${encodeURIComponent(String(releaseId))}/metadata`,
       {
         method: "PATCH",
         headers: {
-          "Content-Type": "application/json",
           Accept: "application/json",
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(metadata),
       }
     );
 
+    const status = result.response.status;
+
+    console.log("Too Lost metadata status:", status);
     console.log(
       "Too Lost metadata response:",
-      result.response.status,
       result.data
     );
 
@@ -88,27 +138,26 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          status: result.response.status,
+          status,
+          step: "update_release_metadata",
           error:
-            "Too Lost rejected the release metadata update.",
-          tooLostResponse: result.data,
-          sentPayload: patch,
+  (result.data as { message?: string; error?: string })?.message ||
+  (result.data as { message?: string; error?: string })?.error ||
+  "Too Lost rejected the metadata update.",
         },
-        {
-          status: result.response.status,
-        }
+        { status }
       );
     }
 
     return NextResponse.json({
       success: true,
-      releaseId,
-      coverUrl: patch.coverUrl || null,
+      releaseId: String(releaseId),
+      artworkUrl: metadata.coverUrl || null,
       data: result.data,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error(
-      "Too Lost metadata update error:",
+      "Too Lost metadata route error:",
       error
     );
 
@@ -116,11 +165,20 @@ export async function PATCH(request: NextRequest) {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update Too Lost release metadata",
+          error?.message ||
+          "Failed to update Too Lost release metadata.",
       },
       { status: 500 }
     );
   }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    success: true,
+    route: "/api/toolost/releases/metadata",
+    method: "POST",
+    tooLostMethod: "PATCH",
+    tooLostEndpoint: "/releases/{releaseId}/metadata",
+  });
 }
