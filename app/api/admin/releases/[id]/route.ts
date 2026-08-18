@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +68,7 @@ export async function PATCH(
     const body = await request.json();
 
     const action = body?.action as Action;
+
     const note =
       typeof body?.note === "string"
         ? body.note.trim()
@@ -92,6 +95,7 @@ export async function PATCH(
     /*
      * Reject and takedown require a reason.
      */
+
     if (
       (action === "reject" || action === "takedown") &&
       !note
@@ -109,25 +113,28 @@ export async function PATCH(
     }
 
     /*
-     * Find release.
+     * Get release from Supabase.
      */
-    const { data: release, error: releaseError } =
-      await supabaseAdmin
-        .from("releases")
-        .select(
-          `
-          id,
-          title,
-          artist_name,
-          status,
-          user_id,
-          white_label_id,
-          admin_note,
-          toolost_release_id
+
+    const {
+      data: release,
+      error: releaseError,
+    } = await supabaseAdmin
+      .from("releases")
+      .select(
         `
-        )
-        .eq("id", id)
-        .maybeSingle();
+        id,
+        title,
+        artist_name,
+        status,
+        user_id,
+        white_label_id,
+        admin_note,
+        toolost_release_id
+        `
+      )
+      .eq("id", id)
+      .maybeSingle();
 
     if (releaseError) {
       console.error(
@@ -157,55 +164,261 @@ export async function PATCH(
     const releaseRow = release as ReleaseRow;
 
     /*
-     * Convert action to database status.
+     * ==========================================
+     * APPROVE
+     * ==========================================
+     *
+     * Approve now actually submits the release
+     * to Too Lost first.
      */
-    const newStatus = getNewStatus(action);
+
+    if (action === "approve") {
+      /*
+       * Too Lost release ID is required.
+       */
+
+      if (!releaseRow.toolost_release_id) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Too Lost release ID is missing. This release cannot be submitted to Too Lost.",
+          },
+          { status: 400 }
+        );
+      }
+
+      /*
+       * Read Too Lost OAuth token from HTTP-only cookie.
+       */
+
+      const cookieStore = await cookies();
+
+      const accessToken =
+        cookieStore.get(
+          "toolost_access_token"
+        )?.value;
+
+      if (!accessToken) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Too Lost is not connected. Please connect Too Lost again.",
+          },
+          { status: 401 }
+        );
+      }
+
+      /*
+       * Submit release to Too Lost.
+       *
+       * POST:
+       * /releases/{releaseId}/submit
+       */
+
+      const toolostPath =
+        `/releases/${encodeURIComponent(
+          String(releaseRow.toolost_release_id)
+        )}/submit`;
+
+      console.log(
+        "Submitting release to Too Lost:",
+        toolostPath
+      );
+
+      const {
+        response: toolostResponse,
+        data: toolostData,
+      } = await tooLostApi(
+        accessToken,
+        toolostPath,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+        }
+      );
+
+      console.log(
+        "Too Lost submit status:",
+        toolostResponse.status
+      );
+
+      console.log(
+        "Too Lost submit response:",
+        toolostData
+      );
+
+      /*
+       * If Too Lost rejects the request,
+       * DO NOT mark our release approved.
+       */
+
+      if (!toolostResponse.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Too Lost submission failed.",
+            tooLostStatus:
+              toolostResponse.status,
+            tooLostResponse:
+              toolostData,
+          },
+          {
+            status:
+              toolostResponse.status >= 400 &&
+              toolostResponse.status < 600
+                ? toolostResponse.status
+                : 502,
+          }
+        );
+      }
+
+      /*
+       * Too Lost accepted the submission.
+       *
+       * Now update Nexorael status.
+       */
+
+      const adminNote =
+        note ||
+        "Approved and submitted to Too Lost.";
+
+      const {
+        data: updatedRelease,
+        error: updateError,
+      } = await supabaseAdmin
+        .from("releases")
+        .update({
+          status: "approved",
+          admin_note: adminNote,
+        })
+        .eq("id", id)
+        .select("*")
+        .single();
+
+      if (updateError) {
+        console.error(
+          "Release update error:",
+          updateError
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Too Lost submission succeeded, but local release status could not be updated.",
+            details:
+              updateError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      /*
+       * Notification
+       */
+
+      if (releaseRow.user_id) {
+        try {
+          await supabaseAdmin
+            .from("notifications")
+            .insert({
+              user_id:
+                releaseRow.user_id,
+
+              title:
+                "Release Approved",
+
+              message:
+                `Your release "${releaseRow.title || "Untitled"}" has been approved and submitted to Too Lost.`,
+
+              type: "approved",
+
+              is_read: false,
+            });
+        } catch (notificationError) {
+          console.error(
+            "Notification error:",
+            notificationError
+          );
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+
+        message:
+          "Release approved and submitted to Too Lost successfully.",
+
+        status: "approved",
+
+        release: updatedRelease,
+
+        tooLost: toolostData,
+      });
+    }
+
+    /*
+     * ==========================================
+     * OTHER ACTIONS
+     * ==========================================
+     */
+
+    const newStatus =
+      getNewStatus(action);
 
     if (!newStatus) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unable to determine release status.",
+          error:
+            "Unable to determine release status.",
         },
         { status: 400 }
       );
     }
 
-    /*
-     * Build admin note.
-     *
-     * For approve/draft/submit we allow an optional note.
-     * For reject/takedown the supplied note becomes the reason.
-     */
-    let adminNote = note || null;
+    let adminNote =
+      note || null;
 
     if (
       action === "reject" &&
       !adminNote
     ) {
-      adminNote = "Release rejected by admin.";
+      adminNote =
+        "Release rejected by admin.";
     }
 
     if (
       action === "takedown" &&
       !adminNote
     ) {
-      adminNote = "Release taken down by admin.";
+      adminNote =
+        "Release taken down by admin.";
     }
 
     /*
-     * Update release.
+     * Update local release.
      */
-    const { data: updatedRelease, error: updateError } =
-      await supabaseAdmin
-        .from("releases")
-        .update({
-          status: newStatus,
-          admin_note: adminNote,
-        })
-        .eq("id", id)
-        .select("*")
-        .single();
+
+    const {
+      data: updatedRelease,
+      error: updateError,
+    } = await supabaseAdmin
+      .from("releases")
+      .update({
+        status: newStatus,
+        admin_note: adminNote,
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
 
     if (updateError) {
       console.error(
@@ -223,24 +436,30 @@ export async function PATCH(
     }
 
     /*
-     * Optional notification.
-     *
-     * Notification failure should NOT make the release
-     * action fail.
+     * Notification
      */
+
     if (releaseRow.user_id) {
       try {
         await supabaseAdmin
           .from("notifications")
           .insert({
-            user_id: releaseRow.user_id,
-            title: getNotificationTitle(action),
-            message: getNotificationMessage(
-              releaseRow.title || "Untitled",
-              newStatus,
-              note
-            ),
+            user_id:
+              releaseRow.user_id,
+
+            title:
+              getNotificationTitle(action),
+
+            message:
+              getNotificationMessage(
+                releaseRow.title ||
+                  "Untitled",
+                newStatus,
+                note
+              ),
+
             type: newStatus,
+
             is_read: false,
           });
       } catch (notificationError) {
@@ -251,44 +470,32 @@ export async function PATCH(
       }
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * "submit" currently changes the release to
-     * "pending".
-     *
-     * We are NOT calling a fake Too Lost endpoint here.
-     * The actual Too Lost submission endpoint must be
-     * connected once the exact API endpoint/documentation
-     * is available.
-     */
-
     let message = "";
 
     switch (action) {
-      case "approve":
-        message = "Release approved successfully.";
-        break;
-
       case "reject":
-        message = "Release rejected successfully.";
+        message =
+          "Release rejected successfully.";
         break;
 
       case "draft":
-        message = "Release moved back to draft.";
+        message =
+          "Release moved back to draft.";
         break;
 
       case "takedown":
-        message = "Release marked for takedown.";
+        message =
+          "Release marked for takedown.";
         break;
 
       case "submit":
         message =
-          "Release submitted for review successfully.";
+          "Release moved to pending review.";
         break;
 
       default:
-        message = "Release updated successfully.";
+        message =
+          "Release updated successfully.";
     }
 
     return NextResponse.json({
@@ -316,7 +523,9 @@ export async function PATCH(
   }
 }
 
-function getNotificationTitle(action: Action) {
+function getNotificationTitle(
+  action: Action
+) {
   switch (action) {
     case "approve":
       return "Release Approved";
@@ -343,10 +552,12 @@ function getNotificationMessage(
   status: string,
   note: string
 ) {
-  let message = `Your release "${title}" status has been updated to ${status}.`;
+  let message =
+    `Your release "${title}" status has been updated to ${status}.`;
 
   if (note) {
-    message += ` Admin note: ${note}`;
+    message +=
+      ` Admin note: ${note}`;
   }
 
   return message;
