@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { tooLostApi } from "@/lib/toolost";
+import ffmpegPath from "ffmpeg-static";
+import { spawn } from "child_process";
+import { promises as fs } from "fs";
+import path from "path";
+import os from "os";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
+
+/* =========================================================
+   FIND UPLOAD DATA FROM TOO LOST
+========================================================= */
 
 function findUploadData(value: any): {
   uploadUrl?: string;
@@ -62,37 +72,164 @@ function findUploadData(value: any): {
   return {};
 }
 
+/* =========================================================
+   UNWRAP TOO LOST RESPONSE
+========================================================= */
+
 function unwrap(value: any) {
   return value?.data?.data ?? value?.data ?? value;
 }
 
-function normalizeAudioFileName(fileName: string): string {
+/* =========================================================
+   SAFE FILE NAME
+========================================================= */
+
+function normalizeFileName(fileName: string): string {
   let name = String(fileName || "").trim();
 
-  // Remove path information if any
+  // Remove folder/path
   name = name.split(/[\\/]/).pop() || "audio";
 
-  // Replace spaces and unsupported characters
-  name = name.replace(/[^\w.-]+/g, "_");
+  // Remove extension
+  name = name.replace(/\.[^.]+$/, "");
 
-  // Remove repeated dots
-  name = name.replace(/\.{2,}/g, ".");
+  // Replace unsupported characters
+  name = name.replace(/[^a-zA-Z0-9_-]+/g, "_");
 
-  // Remove leading/trailing dots
-  name = name.replace(/^\.+/, "").replace(/\.+$/, "");
+  // Remove repeated underscores
+  name = name.replace(/_+/g, "_");
 
-  // Make sure filename is not empty
+  // Remove leading/trailing underscores
+  name = name.replace(/^_+|_+$/g, "");
+
   if (!name) {
     name = "audio";
   }
 
-  // Too Lost upload is for WAV in our dashboard
-  if (!/\.wav$/i.test(name)) {
-    name = `${name}.wav`;
+  // Too Lost requires .flac
+  return `${name}.flac`;
+}
+
+/* =========================================================
+   CONVERT WAV BUFFER TO REAL FLAC
+========================================================= */
+
+async function convertWavToFlac(
+  wavBuffer: Buffer
+): Promise<Buffer> {
+  if (!ffmpegPath) {
+    throw new Error(
+      "FFmpeg binary was not found. Please reinstall ffmpeg-static."
+    );
   }
 
-  return name;
+  const tempDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "toolost-")
+  );
+
+  const inputPath = path.join(
+    tempDirectory,
+    "input.wav"
+  );
+
+  const outputPath = path.join(
+    tempDirectory,
+    "output.flac"
+  );
+
+  try {
+    await fs.writeFile(
+      inputPath,
+      wavBuffer
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      const args = [
+        "-y",
+
+        "-i",
+        inputPath,
+
+        // Audio only
+        "-vn",
+
+        // Real FLAC encoding
+        "-c:a",
+        "flac",
+
+        // Good lossless compression
+        "-compression_level",
+        "5",
+
+        outputPath,
+      ];
+
+      const process = spawn(
+        ffmpegPath as string,
+        args,
+        {
+          windowsHide: true,
+        }
+      );
+
+      let stderr = "";
+
+      process.stderr.on(
+        "data",
+        (data) => {
+          stderr += data.toString();
+        }
+      );
+
+      process.on(
+        "error",
+        (error) => {
+          reject(error);
+        }
+      );
+
+      process.on(
+        "close",
+        (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(
+              new Error(
+                `FFmpeg conversion failed with code ${code}: ${stderr.slice(
+                  -3000
+                )}`
+              )
+            );
+          }
+        }
+      );
+    });
+
+    const flacBuffer =
+      await fs.readFile(outputPath);
+
+    if (!flacBuffer.length) {
+      throw new Error(
+        "FFmpeg created an empty FLAC file."
+      );
+    }
+
+    return flacBuffer;
+  } finally {
+    await fs.rm(
+      tempDirectory,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
+  }
 }
+
+/* =========================================================
+   UPDATE / CREATE TRACK METADATA
+========================================================= */
 
 async function updateTrackMetadata(
   accessToken: string,
@@ -102,119 +239,202 @@ async function updateTrackMetadata(
   audioFileKey?: string
 ) {
   const artists: any[] = [];
-
   const writers: any[] = [];
 
-  /*
-   * ARTIST
-   */
+  /* ---------------- ARTIST ---------------- */
+
   if (track?.artist) {
     artists.push({
-      name: String(track.artist).trim(),
-      role: ["primary"],
+      name: String(
+        track.artist
+      ).trim(),
+
+      role: [
+        "primary",
+      ],
     });
   }
 
-  /*
-   * WRITERS
-   */
+  /* ---------------- WRITERS ---------------- */
+
   if (track?.lyricist) {
     writers.push({
-      name: String(track.lyricist).trim(),
-      role: ["lyricist"],
+      name: String(
+        track.lyricist
+      ).trim(),
+
+      role: [
+        "lyricist",
+      ],
     });
   }
 
   if (track?.composer) {
     writers.push({
-      name: String(track.composer).trim(),
-      role: ["composer"],
+      name: String(
+        track.composer
+      ).trim(),
+
+      role: [
+        "composer",
+      ],
     });
   }
 
   if (track?.writer) {
     writers.push({
-      name: String(track.writer).trim(),
-      role: ["writer"],
+      name: String(
+        track.writer
+      ).trim(),
+
+      role: [
+        "writer",
+      ],
     });
   }
 
   /*
    * Too Lost requires at least one writer.
-   *
-   * If composer / lyricist / writer is missing,
-   * use the primary artist as fallback.
    */
-  if (writers.length === 0 && track?.artist) {
+  if (
+    writers.length === 0 &&
+    track?.artist
+  ) {
     writers.push({
-      name: String(track.artist).trim(),
-      role: ["writer"],
+      name: String(
+        track.artist
+      ).trim(),
+
+      role: [
+        "writer",
+      ],
     });
   }
 
-  /*
-   * Too Lost requires these track fields:
-   * - audioFileKey
-   * - artists
-   * - writers
-   */
-  const payload: Record<string, unknown> = {
-    title: track?.title || "Untitled",
-    language: track?.language || "Hindi",
-    content_type: track?.contentType || "ai_music",
-    explicit: Boolean(track?.explicit),
+  if (!audioFileKey) {
+    throw new Error(
+      "audioFileKey is required before creating the Too Lost track."
+    );
+  }
 
-    audioFileKey: audioFileKey,
+  if (artists.length === 0) {
+    throw new Error(
+      "At least one artist is required."
+    );
+  }
+
+  if (writers.length === 0) {
+    throw new Error(
+      "At least one writer is required."
+    );
+  }
+
+  const payload: Record<
+    string,
+    unknown
+  > = {
+    title:
+      track?.title ||
+      "Untitled",
+
+    language:
+      track?.language ||
+      "Hindi",
+
+    content_type:
+      track?.contentType ||
+      "ai_music",
+
+    explicit:
+      Boolean(
+        track?.explicit
+      ),
+
+    /*
+     * REQUIRED BY TOO LOST
+     */
+    audioFileKey,
+
     artists,
+
     writers,
   };
 
   if (track?.isrc) {
-    payload.isrc = track.isrc;
+    payload.isrc =
+      track.isrc;
   }
 
   if (track?.version) {
-    payload.version = track.version;
+    payload.version =
+      track.version;
   }
 
   if (trackId) {
-    payload.id = trackId;
+    payload.id =
+      trackId;
   }
+
+  console.log(
+    "Sending Too Lost track metadata:",
+    JSON.stringify(
+      payload,
+      null,
+      2
+    )
+  );
 
   return await tooLostApi(
     accessToken,
+
     `/releases/${releaseId}/tracks`,
+
     {
       method: "PUT",
+
       headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
+        "Content-Type":
+          "application/json",
+
+        Accept:
+          "application/json",
       },
+
       body: JSON.stringify({
-        tracks: [payload],
+        tracks: [
+          payload,
+        ],
       }),
     }
   );
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    /*
-     * ---------------------------------------------------------
-     * 1. GET TOO LOST ACCESS TOKEN
-     * ---------------------------------------------------------
-     */
+/* =========================================================
+   POST
+========================================================= */
 
-    const cookieStore = await cookies();
+export async function POST(
+  request: NextRequest
+) {
+  try {
+    /* =====================================================
+       1. GET ACCESS TOKEN
+    ===================================================== */
+
+    const cookieStore =
+      await cookies();
 
     const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
+      cookieStore.get(
+        "toolost_access_token"
+      )?.value;
 
     if (!accessToken) {
       return NextResponse.json(
         {
           success: false,
-          error: "Too Lost is not connected",
+          error:
+            "Too Lost is not connected.",
         },
         {
           status: 401,
@@ -222,29 +442,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 2. READ REQUEST BODY
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       2. READ BODY
+    ===================================================== */
 
-    const body = await request.json();
+    const body =
+      await request.json();
 
     const {
       releaseId,
       fileName,
-      contentType,
       audioUrl,
       track,
     } = body;
 
-    /*
-     * ---------------------------------------------------------
-     * 3. VALIDATE INPUT
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       3. VALIDATE
+    ===================================================== */
 
-    if (!releaseId || !fileName || !audioUrl) {
+    if (
+      !releaseId ||
+      !fileName ||
+      !audioUrl
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -257,131 +477,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 4. NORMALIZE FILE NAME
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       4. DOWNLOAD ORIGINAL WAV
+    ===================================================== */
 
-    const safeFileName =
-      normalizeAudioFileName(String(fileName));
-
-    /*
-     * We are uploading WAV files from the dashboard.
-     *
-     * Do not trust the browser's MIME type because the
-     * browser may send an unsupported MIME value.
-     */
-    const normalizedContentType = "audio/wav";
-
-    console.log("Too Lost upload request:", {
-      releaseId,
-      originalFileName: fileName,
-      safeFileName,
-      originalContentType: contentType,
-      normalizedContentType,
-    });
-
-    /*
-     * ---------------------------------------------------------
-     * 5. ASK TOO LOST FOR SIGNED UPLOAD URL
-     * ---------------------------------------------------------
-     */
-
-    const uploadUrlResult = await tooLostApi(
-      accessToken,
-      `/releases/${releaseId}/tracks/upload-url`,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-
-        body: JSON.stringify({
-          kind: "audio",
-          fileName: safeFileName,
-          contentType: normalizedContentType,
-        }),
-      }
+    console.log(
+      "Downloading WAV from Supabase..."
     );
 
-    /*
-     * ---------------------------------------------------------
-     * 6. CHECK UPLOAD URL RESPONSE
-     * ---------------------------------------------------------
-     */
-
-    if (!uploadUrlResult.response.ok) {
-      console.error(
-        "Too Lost upload-url error:",
-        uploadUrlResult.data
-      );
-
-      return NextResponse.json(
+    const sourceResponse =
+      await fetch(
+        audioUrl,
         {
-          success: false,
-          step: "create_upload_url",
-          status: uploadUrlResult.response.status,
-          fileName: safeFileName,
-          contentType: normalizedContentType,
-          tooLostResponse: uploadUrlResult.data,
-        },
-        {
-          status: uploadUrlResult.response.status,
+          cache:
+            "no-store",
         }
       );
-    }
 
-    /*
-     * ---------------------------------------------------------
-     * 7. EXTRACT SIGNED UPLOAD DATA
-     * ---------------------------------------------------------
-     */
-
-    const upload = findUploadData(
-      uploadUrlResult.data
-    );
-
-    if (!upload.uploadUrl || !upload.fileKey) {
-      console.error(
-        "Too Lost returned invalid upload data:",
-        uploadUrlResult.data
-      );
-
+    if (
+      !sourceResponse.ok
+    ) {
       return NextResponse.json(
         {
           success: false,
-          step: "create_upload_url",
-          error:
-            "Too Lost did not return a usable upload URL/file key.",
-          tooLostResponse: uploadUrlResult.data,
-        },
-        {
-          status: 502,
-        }
-      );
-    }
 
-    /*
-     * ---------------------------------------------------------
-     * 8. DOWNLOAD AUDIO FROM SUPABASE
-     * ---------------------------------------------------------
-     */
+          step:
+            "download_audio",
 
-    const sourceResponse = await fetch(
-      audioUrl,
-      {
-        cache: "no-store",
-      }
-    );
-
-    if (!sourceResponse.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          step: "download_audio",
           error:
             `Could not download audio from Supabase (${sourceResponse.status}).`,
         },
@@ -391,15 +513,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const audioBuffer =
+    const wavArrayBuffer =
       await sourceResponse.arrayBuffer();
 
-    if (!audioBuffer.byteLength) {
+    const wavBuffer =
+      Buffer.from(
+        wavArrayBuffer
+      );
+
+    if (
+      !wavBuffer.length
+    ) {
       return NextResponse.json(
         {
           success: false,
-          step: "download_audio",
-          error: "Downloaded audio file is empty.",
+
+          step:
+            "download_audio",
+
+          error:
+            "Downloaded WAV file is empty.",
         },
         {
           status: 400,
@@ -407,52 +540,185 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 9. UPLOAD BINARY AUDIO TO TOO LOST
-     * ---------------------------------------------------------
-     */
-
-    const uploadHeaders =
-      new Headers(upload.headers || {});
-
-    if (!uploadHeaders.has("Content-Type")) {
-      uploadHeaders.set(
-        "Content-Type",
-        normalizedContentType
-      );
-    }
-
-    const binaryUpload = await fetch(
-      upload.uploadUrl,
-      {
-        method: upload.method || "PUT",
-        headers: uploadHeaders,
-        body: audioBuffer,
-      }
+    console.log(
+      `Downloaded WAV: ${wavBuffer.length} bytes`
     );
 
-    const uploadResponseText =
-      await binaryUpload.text();
+    /* =====================================================
+       5. CONVERT WAV → REAL FLAC
+    ===================================================== */
 
-    if (!binaryUpload.ok) {
+    console.log(
+      "Converting WAV to FLAC..."
+    );
+
+    let flacBuffer: Buffer;
+
+    try {
+      flacBuffer =
+        await convertWavToFlac(
+          wavBuffer
+        );
+    } catch (conversionError) {
       console.error(
-        "Too Lost binary upload failed:",
-        {
-          status: binaryUpload.status,
-          response: uploadResponseText,
-        }
+        "WAV → FLAC conversion failed:",
+        conversionError
       );
 
       return NextResponse.json(
         {
           success: false,
-          step: "too_lost_binary_upload",
+
+          step:
+            "wav_to_flac",
+
           error:
-            `Too Lost audio upload failed (${binaryUpload.status}).`,
-          details:
-            uploadResponseText.slice(0, 2000),
-          fileKey: upload.fileKey,
+            conversionError instanceof Error
+              ? conversionError.message
+              : "WAV to FLAC conversion failed.",
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    console.log(
+      `FLAC created: ${flacBuffer.length} bytes`
+    );
+
+    /* =====================================================
+       6. CREATE VALID FLAC FILE NAME
+    ===================================================== */
+
+    const flacFileName =
+      normalizeFileName(
+        String(fileName)
+      );
+
+    /*
+     * Too Lost documentation requires:
+     *
+     * kind = audio
+     * contentType = audio/flac
+     * fileName = *.flac
+     */
+
+    const tooLostContentType =
+      "audio/flac";
+
+    console.log(
+      "Too Lost upload request:",
+      {
+        releaseId,
+        fileName:
+          flacFileName,
+        contentType:
+          tooLostContentType,
+        kind:
+          "audio",
+      }
+    );
+
+    /* =====================================================
+       7. GET SIGNED UPLOAD URL
+    ===================================================== */
+
+    const uploadUrlResult =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks/upload-url`,
+
+        {
+          method:
+            "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Accept:
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            kind:
+              "audio",
+
+            fileName:
+              flacFileName,
+
+            contentType:
+              tooLostContentType,
+          }),
+        }
+      );
+
+    if (
+      !uploadUrlResult.response.ok
+    ) {
+      console.error(
+        "Too Lost upload-url rejected:",
+        uploadUrlResult.data
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "create_upload_url",
+
+          status:
+            uploadUrlResult.response.status,
+
+          fileName:
+            flacFileName,
+
+          contentType:
+            tooLostContentType,
+
+          tooLostResponse:
+            uploadUrlResult.data,
+        },
+        {
+          status:
+            uploadUrlResult.response.status,
+        }
+      );
+    }
+
+    /* =====================================================
+       8. EXTRACT SIGNED URL
+    ===================================================== */
+
+    const upload =
+      findUploadData(
+        uploadUrlResult.data
+      );
+
+    if (
+      !upload.uploadUrl ||
+      !upload.fileKey
+    ) {
+      console.error(
+        "Invalid Too Lost upload response:",
+        uploadUrlResult.data
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "create_upload_url",
+
+          error:
+            "Too Lost did not return a usable upload URL/file key.",
+
+          tooLostResponse:
+            uploadUrlResult.data,
         },
         {
           status: 502,
@@ -460,53 +726,158 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log(
+      "Too Lost upload URL received."
+    );
+
+    console.log(
+      "Too Lost fileKey:",
+      upload.fileKey
+    );
+
+    /* =====================================================
+       9. UPLOAD REAL FLAC TO SIGNED URL
+    ===================================================== */
+
+    const uploadHeaders =
+      new Headers(
+        upload.headers ||
+          {}
+      );
+
     /*
-     * ---------------------------------------------------------
-     * 10. CHECK EXISTING TRACKS
-     * ---------------------------------------------------------
+     * The signed URL requires FLAC.
      */
-
-    const tracksResult = await tooLostApi(
-      accessToken,
-      `/releases/${releaseId}/tracks`,
-      {
-        method: "GET",
-      }
+    uploadHeaders.set(
+      "Content-Type",
+      tooLostContentType
     );
 
-    let tracks = unwrap(
-      tracksResult.data
+    const binaryUpload = await fetch(
+  upload.uploadUrl,
+  {
+    method:
+      upload.method ||
+      "PUT",
+
+    headers:
+      uploadHeaders,
+
+    body:
+      new Uint8Array(flacBuffer),
+  }
+);
+
+    const uploadResponseText =
+      await binaryUpload.text();
+
+    if (
+      !binaryUpload.ok
+    ) {
+      console.error(
+        "Too Lost FLAC binary upload failed:",
+        {
+          status:
+            binaryUpload.status,
+
+          response:
+            uploadResponseText,
+        }
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "too_lost_binary_upload",
+
+          error:
+            `Too Lost FLAC upload failed (${binaryUpload.status}).`,
+
+          details:
+            uploadResponseText.slice(
+              0,
+              3000
+            ),
+
+          fileKey:
+            upload.fileKey,
+        },
+        {
+          status: 502,
+        }
+      );
+    }
+
+    console.log(
+      "FLAC uploaded successfully to Too Lost."
     );
 
-    if (!Array.isArray(tracks)) {
+    /* =====================================================
+       10. GET EXISTING TRACKS
+    ===================================================== */
+
+    const tracksResult =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks`,
+
+        {
+          method:
+            "GET",
+        }
+      );
+
+    let tracks =
+      unwrap(
+        tracksResult.data
+      );
+
+    if (
+      !Array.isArray(
+        tracks
+      )
+    ) {
       tracks = [];
     }
 
     let currentTrack =
       tracks.length > 0
-        ? tracks[tracks.length - 1]
+        ? tracks[
+            tracks.length - 1
+          ]
         : undefined;
 
     let trackId =
       currentTrack?.id;
 
-    /*
-     * ---------------------------------------------------------
-     * 11. CREATE / UPDATE TRACK METADATA
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       11. CREATE / UPDATE TRACK
+    ===================================================== */
 
-    if (!trackId && track?.title) {
+    if (
+      track?.title
+    ) {
       const metadataResult =
         await updateTrackMetadata(
           accessToken,
-          String(releaseId),
+
+          String(
+            releaseId
+          ),
+
           track,
-          undefined,
+
+          trackId,
+
           upload.fileKey
         );
 
-      if (!metadataResult.response.ok) {
+      if (
+        !metadataResult.response.ok
+      ) {
         console.error(
           "Too Lost rejected track metadata:",
           metadataResult.data
@@ -515,13 +886,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
-            step: "track_metadata",
+
+            step:
+              "track_metadata",
+
             status:
               metadataResult.response.status,
+
             error:
               "Too Lost rejected track metadata.",
+
             tooLostResponse:
               metadataResult.data,
+
             fileKey:
               upload.fileKey,
           },
@@ -532,25 +909,31 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      /*
-       * Fetch tracks again so we can obtain the newly
-       * created track ID.
-       */
+      /* =================================================
+         GET TRACK ID AGAIN
+      ================================================= */
 
       const refreshed =
         await tooLostApi(
           accessToken,
+
           `/releases/${releaseId}/tracks`,
+
           {
-            method: "GET",
+            method:
+              "GET",
           }
         );
 
       const refreshedTracks =
-        unwrap(refreshed.data);
+        unwrap(
+          refreshed.data
+        );
 
       if (
-        Array.isArray(refreshedTracks) &&
+        Array.isArray(
+          refreshedTracks
+        ) &&
         refreshedTracks.length
       ) {
         currentTrack =
@@ -561,57 +944,23 @@ export async function POST(request: NextRequest) {
         trackId =
           currentTrack?.id;
       }
-    } else if (trackId && track?.title) {
-      const metadataResult =
-        await updateTrackMetadata(
-          accessToken,
-          String(releaseId),
-          track,
-          trackId,
-          upload.fileKey
-        );
-
-      if (!metadataResult.response.ok) {
-        console.error(
-          "Too Lost rejected track metadata:",
-          metadataResult.data
-        );
-
-        return NextResponse.json(
-          {
-            success: false,
-            step: "track_metadata",
-            status:
-              metadataResult.response.status,
-            error:
-              "Too Lost rejected track metadata.",
-            tooLostResponse:
-              metadataResult.data,
-            fileKey:
-              upload.fileKey,
-            trackId,
-          },
-          {
-            status:
-              metadataResult.response.status,
-          }
-        );
-      }
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 12. MAKE SURE TRACK ID EXISTS
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       12. CHECK TRACK ID
+    ===================================================== */
 
     if (!trackId) {
       return NextResponse.json(
         {
           success: false,
-          step: "track",
+
+          step:
+            "track",
+
           error:
-            "Too Lost did not expose a track ID after track creation.",
+            "Too Lost did not return a track ID after metadata creation.",
+
           fileKey:
             upload.fileKey,
         },
@@ -621,51 +970,66 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 13. ATTACH AUDIO FILE TO TRACK
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       13. ATTACH FLAC FILE
+    ===================================================== */
 
     const attachResult =
       await tooLostApi(
         accessToken,
+
         `/releases/${releaseId}/tracks/${trackId}/file`,
+
         {
-          method: "PATCH",
+          method:
+            "PATCH",
 
           headers: {
             "Content-Type":
               "application/json",
+
             Accept:
               "application/json",
           },
 
-          body: JSON.stringify({
-            kind: "audio",
-            fileKey: upload.fileKey,
-          }),
+          body:
+            JSON.stringify({
+              kind:
+                "audio",
+
+              fileKey:
+                upload.fileKey,
+            }),
         }
       );
 
-    if (!attachResult.response.ok) {
+    if (
+      !attachResult.response.ok
+    ) {
       console.error(
-        "Too Lost rejected audio attachment:",
+        "Too Lost rejected file attachment:",
         attachResult.data
       );
 
       return NextResponse.json(
         {
           success: false,
-          step: "attach_file",
+
+          step:
+            "attach_file",
+
           status:
             attachResult.response.status,
+
           error:
-            "Too Lost rejected the uploaded audio attachment.",
+            "Too Lost rejected the audio file attachment.",
+
           tooLostResponse:
             attachResult.data,
+
           fileKey:
             upload.fileKey,
+
           trackId,
         },
         {
@@ -675,14 +1039,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 14. SUCCESS
-     * ---------------------------------------------------------
-     */
+    /* =====================================================
+       14. SUCCESS
+    ===================================================== */
+
+    console.log(
+      "Too Lost release track upload completed successfully."
+    );
 
     return NextResponse.json({
-      success: true,
+      success:
+        true,
 
       releaseId,
 
@@ -692,13 +1059,19 @@ export async function POST(request: NextRequest) {
         upload.fileKey,
 
       fileName:
-        safeFileName,
+        flacFileName,
+
+      originalFormat:
+        "wav",
+
+      uploadedFormat:
+        "flac",
 
       contentType:
-        normalizedContentType,
+        "audio/flac",
 
       sizeBytes:
-        audioBuffer.byteLength,
+        flacBuffer.length,
 
       data:
         attachResult.data,
@@ -711,7 +1084,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        success: false,
+        success:
+          false,
+
         error:
           error instanceof Error
             ? error.message
