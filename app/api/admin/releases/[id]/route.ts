@@ -235,7 +235,10 @@ export async function PATCH(
         toolostPath,
         {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({
+  acceptTerms: true,
+  confirmRights: true,
+}),
           headers: {
             "Content-Type":
               "application/json",
