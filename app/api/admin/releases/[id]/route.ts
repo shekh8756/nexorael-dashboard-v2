@@ -236,9 +236,10 @@ export async function PATCH(
         {
           method: "POST",
           body: JSON.stringify({
-  acceptTerms: true,
-  confirmRights: true,
-}),
+          acceptTerms: true,
+           confirmRights: true,
+          store: true,
+         }),
           headers: {
             "Content-Type":
               "application/json",
