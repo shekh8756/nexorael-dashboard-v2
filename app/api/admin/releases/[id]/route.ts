@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +8,8 @@ type Action =
   | "approve"
   | "reject"
   | "draft"
-  | "takedown";
+  | "takedown"
+  | "submit";
 
 type ReleaseRow = {
   id: string;
@@ -46,14 +46,12 @@ export async function GET(
       .single();
 
     if (error) {
-      console.error("Admin release GET error:", error);
-
       return NextResponse.json(
         {
           success: false,
           error: error.message,
         },
-        { status: 500 }
+        { status: 404 }
       );
     }
 
@@ -62,7 +60,7 @@ export async function GET(
       release: data,
     });
   } catch (error) {
-    console.error("Admin release GET exception:", error);
+    console.error("Admin release GET error:", error);
 
     return NextResponse.json(
       {
@@ -98,15 +96,14 @@ export async function PATCH(
 
     const body = await request.json();
 
-    const action = String(
-      body?.action || ""
-    ).toLowerCase() as Action;
+    const action = String(body.action || "").toLowerCase() as Action;
 
     const allowedActions: Action[] = [
       "approve",
       "reject",
       "draft",
       "takedown",
+      "submit",
     ];
 
     if (!allowedActions.includes(action)) {
@@ -114,23 +111,23 @@ export async function PATCH(
         {
           success: false,
           error:
-            "Invalid action. Allowed: approve, reject, draft, takedown",
+            "Invalid action. Allowed: approve, reject, draft, takedown, submit",
         },
         { status: 400 }
       );
     }
 
     /*
-     * First get the release from our database.
+     * Get current release
      */
-    const { data: releaseData, error: releaseError } =
+    const { data: release, error: releaseError } =
       await supabaseAdmin
         .from("releases")
         .select("*")
         .eq("id", id)
         .single();
 
-    if (releaseError || !releaseData) {
+    if (releaseError || !release) {
       return NextResponse.json(
         {
           success: false,
@@ -142,15 +139,31 @@ export async function PATCH(
       );
     }
 
-    const release =
-      releaseData as ReleaseRow;
+    const currentRelease =
+      release as ReleaseRow;
 
     /*
-     * Map Admin action to local status.
+     * Optional admin note
+     */
+    const note =
+      typeof body.note === "string"
+        ? body.note.trim()
+        : "";
+
+    /*
+     * Map admin actions to database status
      */
     let newStatus: string;
 
     switch (action) {
+      case "draft":
+        newStatus = "draft";
+        break;
+
+      case "submit":
+        newStatus = "pending";
+        break;
+
       case "approve":
         newStatus = "approved";
         break;
@@ -159,124 +172,51 @@ export async function PATCH(
         newStatus = "rejected";
         break;
 
-      case "draft":
-        newStatus = "draft";
-        break;
-
       case "takedown":
         newStatus = "takedown";
         break;
+
+      default:
+        newStatus = currentRelease.status || "draft";
     }
 
     /*
-     * Keep a record of the previous status.
-     */
-    const previousStatus =
-      release.status || "unknown";
-
-    /*
-     * If this release has a Too Lost release ID,
-     * try to synchronize the action with Too Lost.
+     * Build update object.
      *
-     * IMPORTANT:
-     * We only attempt the Too Lost call when the
-     * required OAuth token is available.
+     * We intentionally keep this compatible with
+     * the existing releases table.
      */
-    let tooLostResult: unknown = null;
-    let tooLostAttempted = false;
-    let tooLostSuccess = false;
-
-    const toolostReleaseId =
-      release.toolost_release_id;
-
-    const accessToken =
-      request.cookies.get(
-        "toolost_access_token"
-      )?.value;
-
-    if (
-      toolostReleaseId &&
-      accessToken &&
-      (action === "approve" ||
-        action === "takedown")
-    ) {
-      tooLostAttempted = true;
-
-      try {
-        /*
-         * Too Lost release-level endpoint.
-         *
-         * We intentionally keep the local database
-         * update separate so that a failed external
-         * request does not silently destroy local data.
-         */
-        const result = await tooLostApi(
-          accessToken,
-          `/releases/${toolostReleaseId}`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type":
-                "application/json",
-              Accept:
-                "application/json",
-            },
-            body: JSON.stringify({
-              status: newStatus,
-            }),
-          }
-        );
-
-        tooLostResult = result.data;
-        tooLostSuccess =
-          result.response.ok;
-
-        console.log(
-          "Too Lost release action:",
-          {
-            releaseId: toolostReleaseId,
-            action,
-            status:
-              result.response.status,
-            data: result.data,
-          }
-        );
-      } catch (error) {
-        console.error(
-          "Too Lost release action failed:",
-          error
-        );
-
-        tooLostResult = {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Too Lost request failed",
-        };
-      }
-    }
-
-    /*
-     * Update our local Supabase release status.
-     */
-    const updateData: Record<
-      string,
-      unknown
-    > = {
+    const updateData: Record<string, unknown> = {
       status: newStatus,
-      updated_at:
-        new Date().toISOString(),
     };
 
     /*
-     * Save action information when the
-     * corresponding columns exist.
+     * Save admin note only if the column exists.
      *
-     * The first update only uses standard
-     * columns so the API remains compatible
-     * with the current releases table.
+     * If your releases table doesn't have admin_note,
+     * this part is skipped below.
      */
-    const { data: updatedRelease, error: updateError } =
+    if (note) {
+      updateData.admin_note = note;
+    }
+
+    /*
+     * SUBMIT
+     *
+     * For now the database status becomes pending.
+     *
+     * The actual Too Lost submission will be connected
+     * to your existing Too Lost submit API in the next step,
+     * so we don't invent an unsupported Too Lost endpoint.
+     */
+    if (action === "submit") {
+      updateData.status = "pending";
+    }
+
+    /*
+     * Update release
+     */
+    let { data: updatedRelease, error: updateError } =
       await supabaseAdmin
         .from("releases")
         .update(updateData)
@@ -284,9 +224,33 @@ export async function PATCH(
         .select("*")
         .single();
 
+    /*
+     * If admin_note column doesn't exist,
+     * retry without it.
+     */
+    if (
+      updateError &&
+      note &&
+      updateError.message
+        .toLowerCase()
+        .includes("admin_note")
+    ) {
+      delete updateData.admin_note;
+
+      const retry = await supabaseAdmin
+        .from("releases")
+        .update(updateData)
+        .eq("id", id)
+        .select("*")
+        .single();
+
+      updatedRelease = retry.data;
+      updateError = retry.error;
+    }
+
     if (updateError) {
       console.error(
-        "Admin release status update error:",
+        "Release update error:",
         updateError
       );
 
@@ -294,39 +258,32 @@ export async function PATCH(
         {
           success: false,
           error: updateError.message,
-          previousStatus,
-          newStatus,
-          tooLostAttempted,
-          tooLostSuccess,
-          tooLostResult,
+          action,
         },
         { status: 500 }
       );
     }
 
+    /*
+     * Return action result
+     */
     return NextResponse.json({
       success: true,
-
-      message:
-        `Release ${action} action completed.`,
-
-      release: updatedRelease,
-
-      previousStatus,
-
+      action,
+      previousStatus:
+        currentRelease.status || null,
       newStatus,
-
-      tooLost: {
-        attempted: tooLostAttempted,
-        success: tooLostSuccess,
-        releaseId:
-          toolostReleaseId || null,
-        response: tooLostResult,
-      },
+      release: updatedRelease,
+      toolostReleaseId:
+        currentRelease.toolost_release_id || null,
+      message:
+        action === "submit"
+          ? "Release moved to pending review. Too Lost submission will be connected next."
+          : `Release ${action} action completed successfully.`,
     });
   } catch (error) {
     console.error(
-      "Admin release PATCH exception:",
+      "Admin release action error:",
       error
     );
 
@@ -336,7 +293,7 @@ export async function PATCH(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to update release",
+            : "Failed to process release action",
       },
       { status: 500 }
     );

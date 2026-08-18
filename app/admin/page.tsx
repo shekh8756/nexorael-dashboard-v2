@@ -4,146 +4,35 @@ import { useEffect, useMemo, useState } from "react";
 
 type Release = {
   id?: string | number;
-  title?: string;
-  status?: string;
-  type?: string;
-  artist_name?: string;
-  artistName?: string;
-  toolost_release_id?: string | number;
-  toolostReleaseId?: string | number;
+  title?: string | null;
+  status?: string | null;
+  type?: string | null;
+  artist_name?: string | null;
+  artistName?: string | null;
+  toolost_release_id?: string | number | null;
+  toolostReleaseId?: string | number | null;
   upc?: string | null;
-  cover_url?: string | null;
   artwork_url?: string | null;
   artworkUrl?: string | null;
-  created_at?: string;
-  createdAt?: string;
+  cover_url?: string | null;
+  coverUrl?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+  label?: string | null;
   [key: string]: any;
 };
 
-function normalizeStatus(status?: string) {
-  return String(status || "unknown").trim().toLowerCase();
-}
+type Action =
+  | "submit"
+  | "approve"
+  | "reject"
+  | "draft"
+  | "takedown";
 
-function getArtist(release: Release) {
-  return (
-    release.artist_name ||
-    release.artistName ||
-    release.artist ||
-    "Unknown Artist"
-  );
-}
-
-function getArtwork(release: Release) {
-  return (
-    release.artwork_url ||
-    release.artworkUrl ||
-    release.cover_url ||
-    release.coverUrl ||
-    release.cover ||
-    ""
-  );
-}
-
-function getToolostId(release: Release) {
-  return (
-    release.toolost_release_id ||
-    release.toolostReleaseId ||
-    "—"
-  );
-}
-
-function formatDate(value?: string) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function StatusBadge({ status }: { status?: string }) {
-  const normalized = normalizeStatus(status);
-
-  let classes =
-    "bg-zinc-500/10 text-zinc-400 border-zinc-500/20";
-
-  if (
-    normalized === "approved" ||
-    normalized === "live" ||
-    normalized === "delivered"
-  ) {
-    classes =
-      "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-  } else if (
-    normalized === "submitted" ||
-    normalized === "pending" ||
-    normalized === "processing" ||
-    normalized === "under_review"
-  ) {
-    classes =
-      "bg-blue-500/10 text-blue-400 border-blue-500/20";
-  } else if (normalized === "draft") {
-    classes =
-      "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
-  } else if (
-    normalized === "rejected" ||
-    normalized === "failed"
-  ) {
-    classes =
-      "bg-red-500/10 text-red-400 border-red-500/20";
-  }
-
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${classes}`}
-    >
-      {normalized.replaceAll("_", " ")}
-    </span>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  icon,
-}: {
-  title: string;
-  value: number | string;
-  subtitle: string;
-  icon: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-zinc-950/70 p-5 shadow-lg shadow-black/10">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-zinc-500">
-            {title}
-          </p>
-
-          <p className="mt-2 text-3xl font-bold tracking-tight text-white">
-            {value}
-          </p>
-
-          <p className="mt-1 text-xs text-zinc-600">
-            {subtitle}
-          </p>
-        </div>
-
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-lg">
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
-}
+type ConfirmAction = {
+  action: Action;
+  release: Release;
+} | null;
 
 export default function AdminPage() {
   const [releases, setReleases] = useState<Release[]>([]);
@@ -153,37 +42,37 @@ export default function AdminPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  const [actionLoading, setActionLoading] = useState<string | number | null>(
+    null
+  );
+
+  const [confirmAction, setConfirmAction] =
+    useState<ConfirmAction>(null);
+
+  const [note, setNote] = useState("");
+
   async function loadReleases() {
     try {
       setLoading(true);
       setError("");
 
-      const response = await fetch(
-        "/api/admin/releases",
-        {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        }
-      );
+      const response = await fetch("/api/admin/releases", {
+        method: "GET",
+        cache: "no-store",
+      });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
         throw new Error(
-          data.error ||
-            "Failed to load releases"
+          data.error || "Failed to load releases"
         );
       }
 
-      setReleases(
-        Array.isArray(data.releases)
-          ? data.releases
-          : []
-      );
+      setReleases(data.releases || []);
     } catch (err) {
+      console.error(err);
+
       setError(
         err instanceof Error
           ? err.message
@@ -198,840 +87,929 @@ export default function AdminPage() {
     loadReleases();
   }, []);
 
-  /*
-   * ---------------------------------------------------------
-   * STATISTICS
-   * ---------------------------------------------------------
-   */
-
-  const statistics = useMemo(() => {
-    const total = releases.length;
-
-    const draft = releases.filter(
-      (release) =>
-        normalizeStatus(release.status) ===
-        "draft"
-    ).length;
-
-    const submitted = releases.filter(
-      (release) => {
-        const status = normalizeStatus(
-          release.status
-        );
-
-        return [
-          "submitted",
-          "pending",
-          "processing",
-          "under_review",
-        ].includes(status);
-      }
-    ).length;
-
-    const approved = releases.filter(
-      (release) =>
-        normalizeStatus(release.status) ===
-        "approved"
-    ).length;
-
-    const live = releases.filter(
-      (release) =>
-        normalizeStatus(release.status) ===
-        "live"
-    ).length;
-
-    const rejected = releases.filter(
-      (release) => {
-        const status = normalizeStatus(
-          release.status
-        );
-
-        return (
-          status === "rejected" ||
-          status === "failed"
-        );
-      }
-    ).length;
-
-    const artists = new Set(
-      releases
-        .map((release) =>
-          getArtist(release)
-            .trim()
-            .toLowerCase()
-        )
-        .filter(
-          (artist) =>
-            artist &&
-            artist !== "unknown artist"
-        )
-    ).size;
-
-    const labels = new Set(
-      releases
-        .map(
-          (release) =>
-            release.label ||
-            release.label_name ||
-            release.labelName
-        )
-        .filter(Boolean)
-    ).size;
-
-    return {
-      total,
-      draft,
-      submitted,
-      approved,
-      live,
-      rejected,
-      artists,
-      labels,
-    };
-  }, [releases]);
-
-  /*
-   * ---------------------------------------------------------
-   * FILTER RELEASES
-   * ---------------------------------------------------------
-   */
-
   const filteredReleases = useMemo(() => {
-    const query =
-      search.trim().toLowerCase();
+    const query = search.trim().toLowerCase();
 
     return releases.filter((release) => {
-      const status = normalizeStatus(
-        release.status
+      const status = String(
+        release.status || ""
+      ).toLowerCase();
+
+      const artist =
+        release.artist_name ||
+        release.artistName ||
+        "";
+
+      const matchesSearch =
+        !query ||
+        String(release.title || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(artist)
+          .toLowerCase()
+          .includes(query) ||
+        String(
+          release.toolost_release_id ||
+            release.toolostReleaseId ||
+            ""
+        )
+          .toLowerCase()
+          .includes(query) ||
+        String(release.upc || "")
+          .toLowerCase()
+          .includes(query);
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [releases, search, statusFilter]);
+
+  const totalReleases = releases.length;
+
+  const draftReleases = releases.filter(
+    (release) =>
+      String(release.status || "").toLowerCase() ===
+      "draft"
+  ).length;
+
+  const pendingReleases = releases.filter((release) => {
+    const status = String(
+      release.status || ""
+    ).toLowerCase();
+
+    return (
+      status === "pending" ||
+      status === "submitted" ||
+      status === "processing"
+    );
+  }).length;
+
+  const approvedReleases = releases.filter(
+    (release) =>
+      String(release.status || "").toLowerCase() ===
+      "approved"
+  ).length;
+
+  const liveReleases = releases.filter(
+    (release) =>
+      String(release.status || "").toLowerCase() ===
+      "live"
+  ).length;
+
+  const rejectedReleases = releases.filter(
+    (release) =>
+      String(release.status || "").toLowerCase() ===
+      "rejected"
+  ).length;
+
+  const takedownReleases = releases.filter(
+    (release) =>
+      String(release.status || "").toLowerCase() ===
+      "takedown"
+  ).length;
+
+  const artists = new Set(
+    releases
+      .map(
+        (release) =>
+          release.artist_name ||
+          release.artistName
+      )
+      .filter(Boolean)
+  ).size;
+
+  const labels = new Set(
+    releases
+      .map((release) => release.label)
+      .filter(Boolean)
+  ).size;
+
+  function getStatusClass(status: string) {
+    switch (status.toLowerCase()) {
+      case "draft":
+        return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
+
+      case "pending":
+      case "submitted":
+      case "processing":
+        return "border-blue-500/30 bg-blue-500/10 text-blue-400";
+
+      case "approved":
+        return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+
+      case "live":
+        return "border-green-500/30 bg-green-500/10 text-green-400";
+
+      case "rejected":
+        return "border-red-500/30 bg-red-500/10 text-red-400";
+
+      case "takedown":
+        return "border-orange-500/30 bg-orange-500/10 text-orange-400";
+
+      default:
+        return "border-zinc-500/30 bg-zinc-500/10 text-zinc-400";
+    }
+  }
+
+  function getArtwork(release: Release) {
+    return (
+      release.artwork_url ||
+      release.artworkUrl ||
+      release.cover_url ||
+      release.coverUrl ||
+      ""
+    );
+  }
+
+  function openAction(action: Action, release: Release) {
+    setNote("");
+    setConfirmAction({
+      action,
+      release,
+    });
+  }
+
+  async function executeAction() {
+    if (!confirmAction) return;
+
+    const { action, release } = confirmAction;
+
+    if (!release.id) {
+      setError("Release ID is missing.");
+      return;
+    }
+
+    try {
+      setActionLoading(release.id);
+      setError("");
+
+      const response = await fetch(
+        `/api/admin/releases/${release.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action,
+            note: note.trim(),
+          }),
+        }
       );
 
-      if (
-        statusFilter !== "all" &&
-        status !== statusFilter
-      ) {
-        return false;
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error ||
+            `Failed to ${action} release`
+        );
       }
 
-      if (!query) {
-        return true;
-      }
+      setConfirmAction(null);
+      setNote("");
 
-      const searchable = [
-        release.title,
-        getArtist(release),
-        release.type,
-        release.upc,
-        getToolostId(release),
-        release.label,
-        release.label_name,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+      await loadReleases();
+    } catch (err) {
+      console.error(err);
 
-      return searchable.includes(query);
-    });
-  }, [
-    releases,
-    search,
-    statusFilter,
-  ]);
+      setError(
+        err instanceof Error
+          ? err.message
+          : `Failed to ${action} release`
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
 
-  /*
-   * ---------------------------------------------------------
-   * STATUS SUMMARY
-   * ---------------------------------------------------------
-   */
+  function actionLabel(action: Action) {
+    switch (action) {
+      case "submit":
+        return "Submit to Too Lost";
 
-  const statusRows = [
-    {
-      label: "Draft",
-      value: statistics.draft,
-      color: "bg-yellow-400",
-    },
-    {
-      label: "Pending Review",
-      value: statistics.submitted,
-      color: "bg-blue-400",
-    },
-    {
-      label: "Approved",
-      value: statistics.approved,
-      color: "bg-emerald-400",
-    },
-    {
-      label: "Live",
-      value: statistics.live,
-      color: "bg-green-400",
-    },
-    {
-      label: "Rejected",
-      value: statistics.rejected,
-      color: "bg-red-400",
-    },
-  ];
+      case "approve":
+        return "Approve Release";
+
+      case "reject":
+        return "Reject Release";
+
+      case "draft":
+        return "Move to Draft";
+
+      case "takedown":
+        return "Takedown Release";
+    }
+  }
+
+  function actionDescription(action: Action) {
+    switch (action) {
+      case "submit":
+        return "This will move the release to Pending Review.";
+
+      case "approve":
+        return "This will mark the release as approved.";
+
+      case "reject":
+        return "This will mark the release as rejected.";
+
+      case "draft":
+        return "This will move the release back to draft.";
+
+      case "takedown":
+        return "This will mark the release for takedown.";
+    }
+  }
+
+  function renderActions(release: Release) {
+    const status = String(
+      release.status || ""
+    ).toLowerCase();
+
+    const busy =
+      actionLoading === release.id;
+
+    return (
+      <div className="flex flex-wrap gap-2">
+
+        <button
+          onClick={() =>
+            (window.location.href =
+              `/releases/${release.id}`)
+          }
+          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white hover:bg-white/10"
+        >
+          View
+        </button>
+
+        {status === "draft" && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              openAction("submit", release)
+            }
+            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            {busy ? "..." : "Submit"}
+          </button>
+        )}
+
+        {(status === "pending" ||
+          status === "submitted" ||
+          status === "processing") && (
+          <>
+            <button
+              disabled={busy}
+              onClick={() =>
+                openAction("approve", release)
+              }
+              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {busy ? "..." : "Approve"}
+            </button>
+
+            <button
+              disabled={busy}
+              onClick={() =>
+                openAction("reject", release)
+              }
+              className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+            >
+              {busy ? "..." : "Reject"}
+            </button>
+          </>
+        )}
+
+        {status === "approved" && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              openAction("takedown", release)
+            }
+            className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+          >
+            {busy ? "..." : "Takedown"}
+          </button>
+        )}
+
+        {status === "live" && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              openAction("takedown", release)
+            }
+            className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+          >
+            {busy ? "..." : "Takedown"}
+          </button>
+        )}
+
+        {(status === "rejected" ||
+          status === "approved" ||
+          status === "pending" ||
+          status === "submitted" ||
+          status === "processing") && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              openAction("draft", release)
+            }
+            className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs font-semibold text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50"
+          >
+            Draft
+          </button>
+        )}
+
+      </div>
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-[#07090f] text-white">
-      <div className="mx-auto max-w-[1600px] px-5 py-7 md:px-8 lg:px-10">
+    <main className="min-h-screen bg-[#050609] px-4 py-8 text-white md:px-8">
 
-        {/* ================================================= */}
+      <div className="mx-auto max-w-[1500px]">
+
         {/* HEADER */}
-        {/* ================================================= */}
 
-        <header className="flex flex-col gap-5 border-b border-white/10 pb-7 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-5 border-b border-white/10 pb-7 md:flex-row md:items-center md:justify-between">
+
           <div>
             <div className="mb-2 flex items-center gap-2">
-              <span className="rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-400">
+              <span className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-400">
                 ADMIN
               </span>
 
-              <span className="text-xs text-zinc-600">
+              <span className="text-xs text-zinc-500">
                 Nexorael Music Distribution
               </span>
             </div>
 
-            <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
-              Admin Dashboard
+            <h1 className="text-3xl font-bold tracking-tight">
+              Release Management
             </h1>
 
             <p className="mt-2 text-sm text-zinc-500">
-              Manage releases, artists, labels and
-              distribution activity.
+              Manage your complete music catalog,
+              submissions and release status.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={loadReleases}
-              disabled={loading}
-              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading
-                ? "Refreshing..."
-                : "↻ Refresh"}
-            </button>
+          <button
+            onClick={loadReleases}
+            disabled={loading}
+            className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold hover:bg-white/10 disabled:opacity-50"
+          >
+            {loading ? "Refreshing..." : "↻ Refresh"}
+          </button>
 
-            <a
-              href="/admin/releases"
-              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
-            >
-              Manage Releases
-            </a>
-          </div>
-        </header>
+        </div>
 
-        {/* ================================================= */}
         {/* ERROR */}
-        {/* ================================================= */}
 
         {error && (
-          <div className="mt-6 flex items-center justify-between gap-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-red-400">
-                Unable to load releases
-              </p>
-
-              <p className="mt-1 text-xs text-red-400/70">
-                {error}
-              </p>
-            </div>
+          <div className="mt-6 flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm text-red-400">
+            <span>{error}</span>
 
             <button
               onClick={loadReleases}
-              className="rounded-lg border border-red-500/20 px-3 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/10"
+              className="rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-red-500/10"
             >
               Retry
             </button>
           </div>
         )}
 
-        {/* ================================================= */}
-        {/* MAIN STATS */}
-        {/* ================================================= */}
+        {/* STATS */}
 
-        <section className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            title="Total Releases"
-            value={statistics.total}
-            subtitle="All releases in catalog"
+        <div className="mt-7 grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7">
+
+          <Stat
+            label="Total"
+            value={totalReleases}
             icon="🎵"
           />
 
-          <StatCard
-            title="Pending Review"
-            value={statistics.submitted}
-            subtitle="Waiting for review"
-            icon="⏳"
-          />
-
-          <StatCard
-            title="Approved"
-            value={statistics.approved}
-            subtitle="Approved releases"
-            icon="✓"
-          />
-
-          <StatCard
-            title="Live Releases"
-            value={statistics.live}
-            subtitle="Currently live"
-            icon="🌐"
-          />
-        </section>
-
-        {/* ================================================= */}
-        {/* SECONDARY STATS */}
-        {/* ================================================= */}
-
-        <section className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            title="Draft Releases"
-            value={statistics.draft}
-            subtitle="Incomplete releases"
+          <Stat
+            label="Draft"
+            value={draftReleases}
             icon="📝"
           />
 
-          <StatCard
-            title="Rejected"
-            value={statistics.rejected}
-            subtitle="Needs attention"
-            icon="⚠️"
+          <Stat
+            label="Pending"
+            value={pendingReleases}
+            icon="⏳"
           />
 
-          <StatCard
-            title="Artists"
-            value={statistics.artists}
-            subtitle="Unique artists"
+          <Stat
+            label="Approved"
+            value={approvedReleases}
+            icon="✓"
+          />
+
+          <Stat
+            label="Live"
+            value={liveReleases}
+            icon="🌐"
+          />
+
+          <Stat
+            label="Rejected"
+            value={rejectedReleases}
+            icon="⚠"
+          />
+
+          <Stat
+            label="Takedown"
+            value={takedownReleases}
+            icon="🚫"
+          />
+
+        </div>
+
+        {/* SECONDARY STATS */}
+
+        <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">
+
+          <Stat
+            label="Artists"
+            value={artists}
             icon="🎤"
           />
 
-          <StatCard
-            title="Labels"
-            value={statistics.labels}
-            subtitle="Labels in releases"
-            icon="🏷️"
+          <Stat
+            label="Labels"
+            value={labels}
+            icon="🏷"
           />
-        </section>
 
-        {/* ================================================= */}
-        {/* QUICK ACTIONS */}
-        {/* ================================================= */}
+          <Stat
+            label="Catalog Health"
+            value={
+              totalReleases > 0
+                ? `${Math.round(
+                    ((approvedReleases +
+                      liveReleases) /
+                      totalReleases) *
+                      100
+                  )}%`
+                : "0%"
+            }
+            icon="📊"
+          />
 
-        <section className="mt-7 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
-          <a
-            href="/admin/releases"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">🎵</div>
-            <p className="mt-3 text-sm font-semibold">
-              Releases
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Manage catalog
-            </p>
-          </a>
+          <Stat
+            label="Needs Attention"
+            value={
+              rejectedReleases +
+              draftReleases
+            }
+            icon="🔔"
+          />
 
-          <a
-            href="/admin/artists"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">🎤</div>
-            <p className="mt-3 text-sm font-semibold">
-              Artists
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Manage artists
-            </p>
-          </a>
+        </div>
 
-          <a
-            href="/admin/users"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">👥</div>
-            <p className="mt-3 text-sm font-semibold">
-              Users
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              User management
-            </p>
-          </a>
+        {/* RELEASES */}
 
-          <a
-            href="/admin/white-labels"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">🏷️</div>
-            <p className="mt-3 text-sm font-semibold">
-              White Labels
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Partner labels
-            </p>
-          </a>
+        <section className="mt-8 overflow-hidden rounded-2xl border border-white/10 bg-[#0a0a0f]">
 
-          <a
-            href="/admin/royalties"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">💰</div>
-            <p className="mt-3 text-sm font-semibold">
-              Royalties
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Revenue management
-            </p>
-          </a>
+          {/* TOOLBAR */}
 
-          <a
-            href="/admin/withdrawals"
-            className="rounded-xl border border-white/10 bg-zinc-950 p-4 transition hover:border-blue-500/30 hover:bg-blue-500/5"
-          >
-            <div className="text-xl">💸</div>
-            <p className="mt-3 text-sm font-semibold">
-              Withdrawals
-            </p>
-            <p className="mt-1 text-xs text-zinc-600">
-              Payout requests
-            </p>
-          </a>
-        </section>
+          <div className="flex flex-col gap-4 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between">
 
-        {/* ================================================= */}
-        {/* CONTENT GRID */}
-        {/* ================================================= */}
+            <div>
+              <h2 className="text-lg font-bold">
+                All Releases
+              </h2>
 
-        <section className="mt-7 grid grid-cols-1 gap-6 xl:grid-cols-[1fr_340px]">
-
-          {/* RELEASE TABLE */}
-
-          <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950">
-
-            <div className="border-b border-white/10 p-5 md:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-
-                <div>
-                  <h2 className="text-xl font-bold">
-                    Recent Releases
-                  </h2>
-
-                  <p className="mt-1 text-xs text-zinc-600">
-                    Latest releases created in
-                    Nexorael.
-                  </p>
-                </div>
-
-                <div className="flex flex-col gap-2 sm:flex-row">
-
-                  <input
-                    value={search}
-                    onChange={(event) =>
-                      setSearch(
-                        event.target.value
-                      )
-                    }
-                    placeholder="Search releases..."
-                    className="w-full rounded-lg border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-700 focus:border-blue-500/50 sm:w-56"
-                  />
-
-                  <select
-                    value={statusFilter}
-                    onChange={(event) =>
-                      setStatusFilter(
-                        event.target.value
-                      )
-                    }
-                    className="rounded-lg border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-blue-500/50"
-                  >
-                    <option value="all">
-                      All Status
-                    </option>
-                    <option value="draft">
-                      Draft
-                    </option>
-                    <option value="submitted">
-                      Submitted
-                    </option>
-                    <option value="pending">
-                      Pending
-                    </option>
-                    <option value="approved">
-                      Approved
-                    </option>
-                    <option value="live">
-                      Live
-                    </option>
-                    <option value="rejected">
-                      Rejected
-                    </option>
-                  </select>
-
-                </div>
-              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {filteredReleases.length} of{" "}
+                {totalReleases} releases
+              </p>
             </div>
 
-            {loading ? (
-              <div className="p-12 text-center">
-                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-blue-500" />
+            <div className="flex flex-col gap-3 sm:flex-row">
 
-                <p className="mt-4 text-sm text-zinc-600">
-                  Loading releases...
-                </p>
-              </div>
-            ) : filteredReleases.length === 0 ? (
-              <div className="p-12 text-center">
-                <div className="text-4xl">
-                  🎵
-                </div>
+              <input
+                value={search}
+                onChange={(e) =>
+                  setSearch(e.target.value)
+                }
+                placeholder="Search title, artist, UPC..."
+                className="w-full rounded-xl border border-white/10 bg-black px-4 py-2.5 text-sm outline-none placeholder:text-zinc-600 focus:border-blue-500/50 sm:w-72"
+              />
 
-                <p className="mt-4 font-semibold text-zinc-300">
-                  No releases found
-                </p>
+              <select
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value)
+                }
+                className="rounded-xl border border-white/10 bg-black px-4 py-2.5 text-sm outline-none"
+              >
+                <option value="all">
+                  All Status
+                </option>
 
-                <p className="mt-1 text-xs text-zinc-600">
-                  Try changing your search or
-                  status filter.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
+                <option value="draft">
+                  Draft
+                </option>
 
-                <table className="w-full min-w-[950px] text-left">
+                <option value="pending">
+                  Pending
+                </option>
 
-                  <thead className="border-b border-white/10 bg-black/30">
-                    <tr>
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Release
-                      </th>
+                <option value="approved">
+                  Approved
+                </option>
 
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Artist
-                      </th>
+                <option value="live">
+                  Live
+                </option>
 
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Type
-                      </th>
+                <option value="rejected">
+                  Rejected
+                </option>
 
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Status
-                      </th>
+                <option value="takedown">
+                  Takedown
+                </option>
+              </select>
 
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Too Lost ID
-                      </th>
-
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        UPC
-                      </th>
-
-                      <th className="px-5 py-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                        Created
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredReleases.map(
-                      (release, index) => {
-                        const artwork =
-                          getArtwork(release);
-
-                        return (
-                          <tr
-                            key={
-                              release.id ??
-                              `${release.title}-${index}`
-                            }
-                            className="border-b border-white/5 transition hover:bg-white/[0.025]"
-                          >
-
-                            {/* RELEASE */}
-
-                            <td className="px-5 py-4">
-                              <div className="flex items-center gap-3">
-
-                                <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-zinc-900">
-                                  {artwork ? (
-                                    <img
-                                      src={artwork}
-                                      alt={
-                                        release.title ||
-                                        "Artwork"
-                                      }
-                                      className="h-full w-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-lg text-zinc-700">
-                                      ♪
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="min-w-0">
-                                  <p className="truncate font-semibold text-white">
-                                    {release.title ||
-                                      "Untitled Release"}
-                                  </p>
-
-                                  <p className="mt-1 text-[10px] text-zinc-700">
-                                    ID:{" "}
-                                    {release.id ??
-                                      "—"}
-                                  </p>
-                                </div>
-
-                              </div>
-                            </td>
-
-                            {/* ARTIST */}
-
-                            <td className="px-5 py-4 text-sm text-zinc-300">
-                              {getArtist(
-                                release
-                              )}
-                            </td>
-
-                            {/* TYPE */}
-
-                            <td className="px-5 py-4 text-sm capitalize text-zinc-400">
-                              {release.type ||
-                                "—"}
-                            </td>
-
-                            {/* STATUS */}
-
-                            <td className="px-5 py-4">
-                              <StatusBadge
-                                status={
-                                  release.status
-                                }
-                              />
-                            </td>
-
-                            {/* TOO LOST */}
-
-                            <td className="px-5 py-4 font-mono text-xs text-zinc-400">
-                              {getToolostId(
-                                release
-                              )}
-                            </td>
-
-                            {/* UPC */}
-
-                            <td className="px-5 py-4 font-mono text-xs text-zinc-500">
-                              {release.upc ||
-                                "Not generated"}
-                            </td>
-
-                            {/* DATE */}
-
-                            <td className="px-5 py-4 text-xs text-zinc-500">
-                              {formatDate(
-                                release.created_at ||
-                                  release.createdAt
-                              )}
-                            </td>
-
-                          </tr>
-                        );
-                      }
-                    )}
-                  </tbody>
-
-                </table>
-
-              </div>
-            )}
-
-            {/* TABLE FOOTER */}
-
-            {!loading &&
-              filteredReleases.length > 0 && (
-                <div className="border-t border-white/10 px-5 py-4">
-                  <p className="text-xs text-zinc-600">
-                    Showing{" "}
-                    <span className="text-zinc-400">
-                      {filteredReleases.length}
-                    </span>{" "}
-                    of{" "}
-                    <span className="text-zinc-400">
-                      {releases.length}
-                    </span>{" "}
-                    releases
-                  </p>
-                </div>
-              )}
+            </div>
 
           </div>
 
-          {/* ================================================= */}
-          {/* RIGHT SIDEBAR */}
-          {/* ================================================= */}
+          {/* TABLE */}
 
-          <aside className="space-y-6">
+          {loading ? (
+            <div className="p-16 text-center text-sm text-zinc-500">
+              Loading releases...
+            </div>
+          ) : filteredReleases.length === 0 ? (
+            <div className="p-16 text-center">
 
-            {/* RELEASE STATUS */}
+              <div className="text-4xl">
+                🎵
+              </div>
 
-            <div className="rounded-2xl border border-white/10 bg-zinc-950 p-5">
-              <h3 className="font-bold">
-                Release Status
-              </h3>
-
-              <p className="mt-1 text-xs text-zinc-600">
-                Current catalog overview
+              <p className="mt-4 font-semibold">
+                No releases found
               </p>
 
-              <div className="mt-5 space-y-4">
+              <p className="mt-1 text-sm text-zinc-500">
+                Try changing your search or status
+                filter.
+              </p>
 
-                {statusRows.map(
-                  (row) => {
-                    const percentage =
-                      statistics.total >
-                      0
-                        ? Math.round(
-                            (row.value /
-                              statistics.total) *
-                              100
-                          )
-                        : 0;
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
 
-                    return (
-                      <div
-                        key={row.label}
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2">
+              <table className="w-full min-w-[1250px]">
+
+                <thead className="border-b border-white/10 bg-black/30">
+
+                  <tr className="text-left text-xs uppercase tracking-wide text-zinc-500">
+
+                    <th className="px-5 py-4">
+                      Release
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Artist
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Type
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Status
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Too Lost ID
+                    </th>
+
+                    <th className="px-5 py-4">
+                      UPC
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Created
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Actions
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+                <tbody>
+
+                  {filteredReleases.map(
+                    (release, index) => {
+
+                      const artist =
+                        release.artist_name ||
+                        release.artistName ||
+                        "Unknown Artist";
+
+                      const toolostId =
+                        release.toolost_release_id ||
+                        release.toolostReleaseId ||
+                        "—";
+
+                      const status =
+                        String(
+                          release.status ||
+                            "unknown"
+                        );
+
+                      const artwork =
+                        getArtwork(release);
+
+                      const created =
+                        release.created_at ||
+                        release.createdAt;
+
+                      return (
+                        <tr
+                          key={
+                            release.id ??
+                            `${release.title}-${index}`
+                          }
+                          className="border-b border-white/5 align-middle hover:bg-white/[0.02]"
+                        >
+
+                          {/* RELEASE */}
+
+                          <td className="px-5 py-4">
+
+                            <div className="flex items-center gap-3">
+
+                              {artwork ? (
+                                <img
+                                  src={artwork}
+                                  alt=""
+                                  className="h-12 w-12 rounded-lg object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/5 text-xl">
+                                  🎵
+                                </div>
+                              )}
+
+                              <div>
+                                <div className="font-semibold">
+                                  {release.title ||
+                                    "Untitled Release"}
+                                </div>
+
+                                <div className="mt-1 max-w-[220px] truncate text-[10px] text-zinc-600">
+                                  ID:{" "}
+                                  {release.id ||
+                                    "—"}
+                                </div>
+                              </div>
+
+                            </div>
+
+                          </td>
+
+                          {/* ARTIST */}
+
+                          <td className="px-5 py-4 text-sm text-zinc-300">
+                            {artist}
+                          </td>
+
+                          {/* TYPE */}
+
+                          <td className="px-5 py-4 text-sm text-zinc-400">
+                            {release.type ||
+                              "Single"}
+                          </td>
+
+                          {/* STATUS */}
+
+                          <td className="px-5 py-4">
+
                             <span
-                              className={`h-2 w-2 rounded-full ${row.color}`}
-                            />
-
-                            <span className="text-zinc-400">
-                              {row.label}
+                              className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase ${getStatusClass(
+                                status
+                              )}`}
+                            >
+                              {status}
                             </span>
-                          </div>
 
-                          <span className="font-semibold text-white">
-                            {row.value}
-                          </span>
-                        </div>
+                          </td>
 
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
-                          <div
-                            className={`h-full rounded-full ${row.color}`}
-                            style={{
-                              width: `${percentage}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  }
-                )}
+                          {/* TOO LOST */}
 
-              </div>
+                          <td className="px-5 py-4 font-mono text-xs text-zinc-400">
+                            {toolostId}
+                          </td>
+
+                          {/* UPC */}
+
+                          <td className="px-5 py-4 font-mono text-xs text-zinc-500">
+                            {release.upc ||
+                              "Not generated"}
+                          </td>
+
+                          {/* CREATED */}
+
+                          <td className="px-5 py-4 text-xs text-zinc-500">
+
+                            {created
+                              ? new Date(
+                                  created
+                                ).toLocaleDateString()
+                              : "—"}
+
+                          </td>
+
+                          {/* ACTIONS */}
+
+                          <td className="px-5 py-4">
+                            {renderActions(
+                              release
+                            )}
+                          </td>
+
+                        </tr>
+                      );
+                    }
+                  )}
+
+                </tbody>
+
+              </table>
+
             </div>
-
-            {/* ADMIN MODULES */}
-
-            <div className="rounded-2xl border border-white/10 bg-zinc-950 p-5">
-              <h3 className="font-bold">
-                Admin Modules
-              </h3>
-
-              <div className="mt-4 space-y-2">
-
-                <a
-                  href="/admin/analytics"
-                  className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
-                >
-                  <span>
-                    📊 Analytics
-                  </span>
-
-                  <span>→</span>
-                </a>
-
-                <a
-                  href="/admin/delivery"
-                  className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
-                >
-                  <span>
-                    🚚 Delivery
-                  </span>
-
-                  <span>→</span>
-                </a>
-
-                <a
-                  href="/admin/contracts"
-                  className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
-                >
-                  <span>
-                    📄 Contracts
-                  </span>
-
-                  <span>→</span>
-                </a>
-
-                <a
-                  href="/admin/bulk-upload"
-                  className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
-                >
-                  <span>
-                    📤 Bulk Upload
-                  </span>
-
-                  <span>→</span>
-                </a>
-
-                <a
-                  href="/admin/support"
-                  className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/[0.04] hover:text-white"
-                >
-                  <span>
-                    🎫 Support
-                  </span>
-
-                  <span>→</span>
-                </a>
-
-              </div>
-            </div>
-
-            {/* SYSTEM INFO */}
-
-            <div className="rounded-2xl border border-blue-500/10 bg-blue-500/[0.03] p-5">
-              <div className="flex items-start gap-3">
-
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-                  ℹ️
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold">
-                    Nexorael Admin
-                  </h3>
-
-                  <p className="mt-1 text-xs leading-5 text-zinc-600">
-                    This panel displays releases
-                    available through the Nexorael
-                    administration system.
-                  </p>
-
-                  <p className="mt-3 text-[10px] text-zinc-700">
-                    Data source: Admin Releases API
-                  </p>
-                </div>
-
-              </div>
-            </div>
-
-          </aside>
+          )}
 
         </section>
 
       </div>
+
+      {/* CONFIRMATION MODAL */}
+
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101014] p-6 shadow-2xl">
+
+            <div className="flex items-start justify-between">
+
+              <div>
+                <h3 className="text-lg font-bold">
+                  {actionLabel(
+                    confirmAction.action
+                  )}
+                </h3>
+
+                <p className="mt-2 text-sm text-zinc-400">
+                  {actionDescription(
+                    confirmAction.action
+                  )}
+                </p>
+              </div>
+
+              <button
+                onClick={() =>
+                  setConfirmAction(null)
+                }
+                className="text-xl text-zinc-500 hover:text-white"
+              >
+                ×
+              </button>
+
+            </div>
+
+            <div className="mt-5 rounded-xl border border-white/10 bg-black/30 p-4">
+
+              <div className="font-semibold">
+                {confirmAction.release.title ||
+                  "Untitled Release"}
+              </div>
+
+              <div className="mt-1 text-xs text-zinc-500">
+                {confirmAction.release.artist_name ||
+                  confirmAction.release.artistName ||
+                  "Unknown Artist"}
+              </div>
+
+            </div>
+
+            {(confirmAction.action ===
+              "reject" ||
+              confirmAction.action ===
+                "takedown") && (
+              <div className="mt-5">
+
+                <label className="mb-2 block text-xs font-semibold text-zinc-400">
+                  Reason / Note
+                </label>
+
+                <textarea
+                  value={note}
+                  onChange={(e) =>
+                    setNote(e.target.value)
+                  }
+                  placeholder={
+                    confirmAction.action ===
+                    "reject"
+                      ? "Why is this release being rejected?"
+                      : "Why is this release being taken down?"
+                  }
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-black p-3 text-sm outline-none placeholder:text-zinc-600 focus:border-blue-500/50"
+                />
+
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+
+              <button
+                onClick={() =>
+                  setConfirmAction(null)
+                }
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold hover:bg-white/10"
+              >
+                Cancel
+              </button>
+
+              <button
+                disabled={
+                  actionLoading !== null
+                }
+                onClick={executeAction}
+                className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold text-white disabled:opacity-50 ${
+                  confirmAction.action ===
+                  "reject"
+                    ? "bg-red-600 hover:bg-red-500"
+                    : confirmAction.action ===
+                      "takedown"
+                    ? "bg-orange-600 hover:bg-orange-500"
+                    : confirmAction.action ===
+                      "approve"
+                    ? "bg-emerald-600 hover:bg-emerald-500"
+                    : "bg-blue-600 hover:bg-blue-500"
+                }`}
+              >
+                {actionLoading !== null
+                  ? "Processing..."
+                  : "Confirm"}
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
     </main>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string | number;
+  icon: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#0a0a0f] p-4">
+
+      <div className="flex items-center justify-between">
+
+        <div>
+          <p className="text-xs text-zinc-500">
+            {label}
+          </p>
+
+          <p className="mt-2 text-2xl font-bold">
+            {value}
+          </p>
+        </div>
+
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-sm">
+          {icon}
+        </div>
+
+      </div>
+
+    </div>
   );
 }
