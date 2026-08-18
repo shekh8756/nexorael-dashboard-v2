@@ -39,7 +39,16 @@ const emptyTrack: TrackInput = {
   audio: null,
 };
 
-const steps = ["Release", "Files", "Recordings", "Authors", "Lyrics", "Cover", "Distribution", "Confirm"];
+const steps = [
+  "Release",
+  "Files",
+  "Recordings",
+  "Authors",
+  "Lyrics",
+  "Cover",
+  "Distribution",
+  "Confirm",
+];
 
 const genreOptions = [
   "Pop","Hip Hop","Rap","Rock","Dance","Electronic","EDM","House","Techno","Trance",
@@ -57,14 +66,18 @@ const languageOptions = [
 ];
 
 const dspOptions = [
-  "Spotify","Apple Music","YouTube Music","Amazon Music","Deezer","TikTok","Meta / Facebook",
-  "Instagram","JioSaavn","Gaana","Wynk","Boomplay","Audiomack"
+  "Spotify","Apple Music","YouTube Music","Amazon Music","Deezer","TikTok",
+  "Meta / Facebook","Instagram","JioSaavn","Gaana","Wynk","Boomplay","Audiomack"
 ];
 
 const countryOptions = [
   "Worldwide","India","United States","United Kingdom","Nigeria","Bangladesh","Pakistan",
   "Nepal","UAE","Saudi Arabia","Canada","Australia"
 ];
+
+function unwrap(value: any) {
+  return value?.data?.data ?? value?.data ?? value;
+}
 
 export default function NewReleasePage() {
   const router = useRouter();
@@ -77,9 +90,11 @@ export default function NewReleasePage() {
   const [artists, setArtists] = useState<string[]>([""]);
   const [labelName, setLabelName] = useState("");
   const [genre, setGenre] = useState("");
+  const [subgenre, setSubgenre] = useState("");
   const [language, setLanguage] = useState("");
   const [releaseDate, setReleaseDate] = useState("");
-  const [musicCreatedDate, setMusicCreatedDate] = useState("");
+  const [originalReleaseDate, setOriginalReleaseDate] = useState("");
+  const [catalogNumber, setCatalogNumber] = useState("");
   const [upc, setUpc] = useState("");
   const [autoUpc, setAutoUpc] = useState(true);
   const [previousUpc, setPreviousUpc] = useState("");
@@ -111,19 +126,24 @@ export default function NewReleasePage() {
 
   const completion = useMemo(() => {
     let score = 0;
-    if (title) score += 10;
-    if (mainArtist) score += 10;
-    if (labelName) score += 8;
-    if (genre) score += 8;
-    if (language) score += 8;
-    if (releaseDate) score += 8;
-    if (musicCreatedDate) score += 8;
+    if (title) score += 8;
+    if (mainArtist) score += 8;
+    if (labelName) score += 7;
+    if (genre) score += 7;
+    if (subgenre) score += 5;
+    if (language) score += 7;
+    if (releaseDate) score += 7;
+    if (originalReleaseDate) score += 7;
     if (artwork) score += 12;
     if (tracks.every((t) => t.title && t.audio)) score += 18;
-    if (selectedDSPs.length > 0) score += 5;
-    if (selectedCountries.length > 0) score += 5;
+    if (selectedDSPs.length) score += 5;
+    if (selectedCountries.length) score += 5;
     return Math.min(score, 100);
-  }, [title, mainArtist, labelName, genre, language, releaseDate, musicCreatedDate, artwork, tracks, selectedDSPs, selectedCountries]);
+  }, [
+    title, mainArtist, labelName, genre, subgenre, language,
+    releaseDate, originalReleaseDate, artwork, tracks,
+    selectedDSPs, selectedCountries
+  ]);
 
   function getStepIndex() {
     return steps.indexOf(activeStep);
@@ -167,12 +187,16 @@ export default function NewReleasePage() {
 
   function toggleDsp(dsp: string) {
     setSelectedDSPs((prev) =>
-      prev.includes(dsp) ? prev.filter((item) => item !== dsp) : [...prev, dsp]
+      prev.includes(dsp)
+        ? prev.filter((item) => item !== dsp)
+        : [...prev, dsp]
     );
   }
 
   function updateArtist(index: number, value: string) {
-    setArtists((prev) => prev.map((item, i) => (i === index ? value : item)));
+    setArtists((prev) =>
+      prev.map((item, i) => (i === index ? value : item))
+    );
   }
 
   function addArtist() {
@@ -184,8 +208,16 @@ export default function NewReleasePage() {
     setArtists((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function updateTrack(index: number, field: keyof TrackInput, value: string | boolean | File | null) {
-    setTracks((prev) => prev.map((track, i) => (i === index ? { ...track, [field]: value } : track)));
+  function updateTrack(
+    index: number,
+    field: keyof TrackInput,
+    value: string | boolean | File | null
+  ) {
+    setTracks((prev) =>
+      prev.map((track, i) =>
+        i === index ? { ...track, [field]: value } : track
+      )
+    );
   }
 
   function addTrack() {
@@ -237,16 +269,21 @@ export default function NewReleasePage() {
   function validateArtwork(file: File) {
     return new Promise<boolean>((resolve) => {
       const img = new Image();
+
       img.onload = () => {
-        if (img.width !== 3000 || img.height !== 3000) {
-          alert("Cover image 3000x3000 hona chahiye. Pehle image ko 3000x3000 me convert karo.");
+        const valid = img.width === 3000 && img.height === 3000;
+
+        if (!valid) {
+          alert(
+            "Cover image 3000x3000 hona chahiye. Pehle image ko 3000x3000 me convert karo."
+          );
           setArtwork(null);
-          resolve(false);
-        } else {
-          resolve(true);
         }
+
         URL.revokeObjectURL(img.src);
+        resolve(valid);
       };
+
       img.src = URL.createObjectURL(file);
     });
   }
@@ -257,8 +294,7 @@ export default function NewReleasePage() {
       return;
     }
 
-    const valid = await validateArtwork(file);
-    if (valid) setArtwork(file);
+    if (await validateArtwork(file)) setArtwork(file);
   }
 
   function validateBeforeSubmit() {
@@ -268,697 +304,459 @@ export default function NewReleasePage() {
     if (!genre) return "Genre select karo.";
     if (!language) return "Language select karo.";
     if (!releaseDate) return "Release date select karo.";
-    if (!musicCreatedDate) return "Music created date select karo.";
-    if (previouslyReleased && !previousUpc) return "Previously released music ke liye old UPC required hai.";
-    if (!autoUpc && !upc && !previouslyReleased) return "UPC daalo ya Auto UPC tick karo.";
+    if (!originalReleaseDate) return "Original release date select karo.";
+    if (previouslyReleased && !previousUpc) {
+      return "Previously released music ke liye old UPC required hai.";
+    }
+    if (!autoUpc && !upc && !previouslyReleased) {
+      return "UPC daalo ya Auto UPC tick karo.";
+    }
     if (!artwork) return "3000x3000 cover artwork upload karo.";
-    if (selectedDSPs.length === 0) return "Kam se kam ek DSP select karo.";
-    if (selectedCountries.length === 0) return "Country select karo.";
+    if (!selectedDSPs.length) return "Kam se kam ek DSP select karo.";
+    if (!selectedCountries.length) return "Country select karo.";
 
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i];
       if (!t.title) return `Track ${i + 1} title required hai.`;
       if (!t.audio) return `Track ${i + 1} audio upload karo.`;
-      if (!t.auto_isrc && !t.isrc) return `Track ${i + 1} me ISRC daalo ya Auto ISRC tick karo.`;
-      if (t.previous_isrc_enabled && !t.previous_isrc) return `Track ${i + 1} ka Previous ISRC daalo.`;
+      if (!t.auto_isrc && !t.isrc) {
+        return `Track ${i + 1} me ISRC daalo ya Auto ISRC tick karo.`;
+      }
+      if (t.previous_isrc_enabled && !t.previous_isrc) {
+        return `Track ${i + 1} ka Previous ISRC daalo.`;
+      }
     }
 
     return "";
   }
 
   async function submitRelease(e: FormEvent) {
-  e.preventDefault();
+    e.preventDefault();
 
-  const validationError = validateBeforeSubmit();
+    const validationError = validateBeforeSubmit();
 
-  if (validationError) {
-    alert(validationError);
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    // -----------------------------------------
-    // LOGIN CHECK
-    // -----------------------------------------
-
-    const {
-      data: userData,
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !userData.user) {
-      alert("Please login first.");
-      router.push("/login");
+    if (validationError) {
+      alert(validationError);
       return;
     }
 
-    // -----------------------------------------
-    // PROFILE
-    // -----------------------------------------
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("white_label_id")
-      .eq("id", userData.user.id)
-      .maybeSingle();
-
-    // -----------------------------------------
-    // UPC
-    // -----------------------------------------
-
-    const generatedUpc = autoUpc
-      ? `NX${Date.now().toString().slice(-10)}`
-      : upc;
-
-    // -----------------------------------------
-    // TOO LOST CONNECTION
-    // -----------------------------------------
-
-    alert("Creating release on Too Lost...");
-
-    const meResponse = await fetch(
-      "/api/toolost/me",
-      {
-        method: "GET",
-        cache: "no-store",
-      }
-    );
-
-    const meText = await meResponse.text();
-
-    let meData: any;
+    setLoading(true);
 
     try {
-      meData = JSON.parse(meText);
-    } catch {
-      throw new Error(
-        `Too Lost connection check failed: ${meText.slice(
-          0,
-          500
-        )}`
-      );
-    }
+      const { data: userData, error: userError } =
+        await supabase.auth.getUser();
 
-    if (
-      !meResponse.ok ||
-      !meData.connected
-    ) {
-      throw new Error(
-        "Too Lost is not connected. Please connect Too Lost first."
-      );
-    }
+      if (userError || !userData.user) {
+        alert("Please login first.");
+        router.push("/login");
+        return;
+      }
 
-    // -----------------------------------------
-    // CREATE TOO LOST RELEASE
-    // -----------------------------------------
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("white_label_id")
+        .eq("id", userData.user.id)
+        .maybeSingle();
 
-    const tooLostReleaseResponse =
-      await fetch(
+      const meResponse = await fetch("/api/toolost/me", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const meData = await meResponse.json();
+
+      if (!meResponse.ok || !meData.connected) {
+        throw new Error(
+          "Too Lost is not connected. Please connect Too Lost first."
+        );
+      }
+
+      alert("Creating release on Too Lost...");
+
+      // IMPORTANT:
+      // Auto UPC means Too Lost should assign/return the authoritative UPC.
+      // We no longer create fake/random NX UPC values in the browser.
+      const requestedUpc =
+        autoUpc || previouslyReleased ? "" : upc.trim();
+
+      const createResponse = await fetch(
         "/api/toolost/releases/create",
         {
           method: "POST",
-
           headers: {
-            "Content-Type":
-              "application/json",
+            "Content-Type": "application/json",
           },
-
           body: JSON.stringify({
             title,
-
             type:
               releaseType === "album"
                 ? "Album"
                 : releaseType === "ep"
                 ? "EP"
                 : "Single",
-
             label: labelName,
-
-            artistName:
-              artists
-                .filter(Boolean)
-                .join(", "),
-
+            artistName: mainArtist,
             role: "primary",
+            genre,
+            subgenre: subgenre || undefined,
+            language,
+            releaseDate,
+            originalReleaseDate,
+            catalogNumber: catalogNumber || undefined,
+            upc: requestedUpc || undefined,
           }),
         }
       );
 
-    const tooLostReleaseText =
-      await tooLostReleaseResponse.text();
-
-    let tooLostReleaseData: any;
-
-    try {
-      tooLostReleaseData =
-        JSON.parse(
-          tooLostReleaseText
-        );
-    } catch {
-      throw new Error(
-        `Too Lost release API returned non-JSON (${tooLostReleaseResponse.status}): ${tooLostReleaseText.slice(
-          0,
-          1000
-        )}`
-      );
-    }
-
-    if (
-      !tooLostReleaseResponse.ok ||
-      !tooLostReleaseData.success
-    ) {
-      throw new Error(
-        tooLostReleaseData.error ||
-          JSON.stringify(
-            tooLostReleaseData
-          )
-      );
-    }
-
-    const tooLostRelease =
-      tooLostReleaseData?.data?.data ??
-      tooLostReleaseData?.data ??
-      tooLostReleaseData;
-
-    const tooLostReleaseId =
-      tooLostRelease?.id;
-
-    if (!tooLostReleaseId) {
-      throw new Error(
-        "Too Lost did not return a release ID."
-      );
-    }
-
-    console.log(
-      "Too Lost release created:",
-      tooLostReleaseId
-    );
-
-    // -----------------------------------------
-    // ARTWORK → SUPABASE
-    // -----------------------------------------
-
-    const artworkUrl =
-      await uploadFile(
-        "release-artwork",
-        artwork as File
-      );
-
-    let licenseUrl = "";
-
-    if (licenseFile) {
-      licenseUrl =
-        await uploadFile(
-          "release-artwork",
-          licenseFile
-        );
-    }
-
-    // -----------------------------------------
-    // SAVE RELEASE TO SUPABASE
-    // -----------------------------------------
-
-    const {
-      data: releaseData,
-      error: releaseError,
-    } = await supabase
-      .from("releases")
-      .insert({
-        user_id:
-          userData.user.id,
-
-        white_label_id:
-          profile?.white_label_id ||
-          null,
-
-        title,
-
-        subtitle: version,
-
-        version,
-
-        release_artists:
-          artists.filter(Boolean),
-
-        artist_name:
-          mainArtist,
-
-        label_name:
-          labelName,
-
-        genre,
-
-        language,
-
-        release_date:
-          releaseDate,
-
-        music_created_date:
-          musicCreatedDate || null,
-
-        music_type:
-          musicType,
-
-        previously_released:
-          previouslyReleased,
-
-        previous_upc:
-          previouslyReleased
-            ? previousUpc
-            : null,
-
-        content_id_required:
-          contentIdRequired,
-
-        selected_dsps:
-          selectedDSPs,
-
-        selected_countries:
-          selectedCountries,
-
-        license_url:
-          licenseUrl || null,
-
-        lyrics_text:
-          lyricsText,
-
-        upc:
-          generatedUpc,
-
-        auto_upc:
-          generatedUpc,
-
-        release_type:
-          releaseType,
-
-        artwork_url:
-          artworkUrl,
-
-        toolost_release_id:
-          String(
-            tooLostReleaseId
-          ),
-
-        status: "draft",
-      })
-      .select()
-      .single();
-
-    if (releaseError) {
-      throw releaseError;
-    }
-
-    // -----------------------------------------
-    // TRACK UPLOADS
-    // -----------------------------------------
-
-    for (
-      let i = 0;
-      i < tracks.length;
-      i++
-    ) {
-      const track =
-        tracks[i];
-
-      if (!track.audio) {
-        throw new Error(
-          `Track ${i + 1} audio is missing.`
-        );
-      }
-
-      // -----------------------------------------
-      // UPLOAD AUDIO TO SUPABASE
-      // -----------------------------------------
-
-      alert(
-        `Uploading track ${i + 1} of ${tracks.length} to Supabase...`
-      );
-
-      const audioUrl =
-        await uploadFile(
-          "release-audio",
-          track.audio
-        );
-
-      if (!audioUrl) {
-        throw new Error(
-          `Track ${i + 1}: Supabase audio upload failed.`
-        );
-      }
-
-      console.log(
-        "Supabase audio uploaded:",
-        audioUrl
-      );
-
-      // -----------------------------------------
-      // VERCEL SERVER → TOO LOST
-      // -----------------------------------------
-
-      alert(
-        `Uploading track ${i + 1} of ${tracks.length} to Too Lost...`
-      );
-
-      const serverUploadResponse =
-        await fetch(
-          "/api/toolost/upload-audio",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body: JSON.stringify({
-              releaseId:
-                tooLostReleaseId,
-
-              fileName:
-                track.audio.name,
-
-              contentType:
-                track.audio.type ||
-                "audio/wav",
-
-              audioUrl,
-            }),
-          }
-        );
-
-      const serverUploadText =
-        await serverUploadResponse.text();
-
-      let serverUploadData: any;
+      const createText = await createResponse.text();
+      let createData: any;
 
       try {
-        serverUploadData =
-          JSON.parse(
-            serverUploadText
-          );
+        createData = JSON.parse(createText);
       } catch {
         throw new Error(
-          `Server upload returned non-JSON (${serverUploadResponse.status}): ${serverUploadText.slice(
+          `Too Lost release API returned non-JSON (${createResponse.status}): ${createText.slice(
             0,
             1000
           )}`
         );
       }
 
-      if (
-        !serverUploadResponse.ok ||
-        !serverUploadData.success
-      ) {
+      if (!createResponse.ok || !createData.success) {
         throw new Error(
-          serverUploadData.error ||
-            JSON.stringify(
-              serverUploadData
-            )
+          createData.error ||
+            createData.tooLostResponse?.message ||
+            JSON.stringify(createData)
         );
       }
 
-      const fileKey =
-        serverUploadData.fileKey;
+      const tooLostRelease = unwrap(createData.data);
+      const tooLostReleaseId =
+        createData.releaseId || tooLostRelease?.id;
 
-      if (!fileKey) {
-        throw new Error(
-          "Too Lost fileKey was not returned."
+      if (!tooLostReleaseId) {
+        throw new Error("Too Lost did not return a release ID.");
+      }
+
+      const authoritativeUpc =
+        tooLostRelease?.upc ||
+        tooLostRelease?.UPC ||
+        tooLostRelease?.upc_code ||
+        (requestedUpc || null);
+
+      const authoritativeCatalog =
+        tooLostRelease?.catalog_number ||
+        tooLostRelease?.catalogNumber ||
+        catalogNumber ||
+        null;
+
+      if (authoritativeUpc) setUpc(String(authoritativeUpc));
+      if (authoritativeCatalog) {
+        setCatalogNumber(String(authoritativeCatalog));
+      }
+
+      // Artwork is uploaded to Supabase first, then attached to the
+      // same Too Lost release through the dedicated metadata endpoint.
+      alert("Uploading artwork...");
+
+      const artworkUrl = await uploadFile(
+        "release-artwork",
+        artwork as File
+      );
+
+      let licenseUrl = "";
+
+      if (licenseFile) {
+        licenseUrl = await uploadFile(
+          "release-artwork",
+          licenseFile
         );
       }
 
-      console.log(
-        "Too Lost audio upload completed:",
+      const artworkResponse = await fetch(
+        "/api/toolost/releases/metadata",
         {
-          releaseId:
-            tooLostReleaseId,
-          fileKey,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            releaseId: tooLostReleaseId,
+            artworkUrl,
+            metadata: {
+              label: labelName,
+              genre,
+              ...(subgenre ? { subgenre } : {}),
+              language,
+              release_date: releaseDate,
+              original_release_date: originalReleaseDate,
+              ...(catalogNumber
+                ? { catalog_number: catalogNumber }
+                : {}),
+              ...(authoritativeUpc
+                ? { upc: authoritativeUpc }
+                : {}),
+            },
+          }),
         }
       );
 
-      // -----------------------------------------
-      // GENERATE ISRC
-      // -----------------------------------------
+      const artworkText = await artworkResponse.text();
+      let artworkData: any;
 
-      const generatedIsrc =
-        track.auto_isrc
-          ? `NX${new Date()
-              .getFullYear()}${String(
-              i + 1
-            ).padStart(
-              5,
-              "0"
-            )}${Date.now()
-              .toString()
-              .slice(-3)}`
-          : track.isrc;
-
-      // -----------------------------------------
-      // SAVE TRACK TO SUPABASE
-      // -----------------------------------------
-
-      const {
-        error: trackError,
-      } = await supabase
-        .from("tracks")
-        .insert({
-          release_id:
-            releaseData.id,
-
-          title:
-            track.title,
-
-          artist_name:
-            mainArtist,
-
-          isrc:
-            generatedIsrc,
-
-          auto_isrc:
-            generatedIsrc,
-
-          auto_isrc_enabled:
-            track.auto_isrc,
-
-          previous_isrc:
-            track.previous_isrc_enabled
-              ? track.previous_isrc
-              : null,
-
-          audio_url:
-            audioUrl,
-
-          track_number:
-            i + 1,
-
-          explicit:
-            track.explicit,
-
-          composer:
-            track.composer,
-
-          lyricist:
-            track.lyricist,
-
-          producer:
-            track.producer,
-
-          publisher:
-            track.publisher,
-
-          version:
-            track.version,
-
-          language:
-            track.language,
-
-          content_type:
-            track.content_type,
-
-          toolost_file_key:
-            fileKey,
-        });
-
-      if (trackError) {
-        throw trackError;
+      try {
+        artworkData = JSON.parse(artworkText);
+      } catch {
+        throw new Error(
+          `Too Lost artwork API returned non-JSON (${artworkResponse.status}).`
+        );
       }
-    }
 
-    // -----------------------------------------
-    // NOTIFICATION
-    // -----------------------------------------
+      if (!artworkResponse.ok || !artworkData.success) {
+        throw new Error(
+          artworkData.error || JSON.stringify(artworkData)
+        );
+      }
 
-    await supabase
-      .from("notifications")
-      .insert({
-        user_id:
-          userData.user.id,
+      // Save release in Supabase only after Too Lost has the release,
+      // metadata and artwork.
+      const { data: releaseData, error: releaseError } =
+        await supabase
+          .from("releases")
+          .insert({
+            user_id: userData.user.id,
+            white_label_id: profile?.white_label_id || null,
+            title,
+            subtitle: version,
+            version,
+            release_artists: artists.filter(Boolean),
+            artist_name: mainArtist,
+            label_name: labelName,
+            label: labelName,
+            genre,
+            subgenre: subgenre || null,
+            language,
+            release_date: releaseDate,
+            original_release_date: originalReleaseDate,
+            music_created_date: originalReleaseDate,
+            music_type: musicType,
+            previously_released: previouslyReleased,
+            previous_upc: previouslyReleased ? previousUpc : null,
+            content_id_required: contentIdRequired,
+            selected_dsps: selectedDSPs,
+            selected_countries: selectedCountries,
+            license_url: licenseUrl || null,
+            lyrics_text: lyricsText,
+            upc: authoritativeUpc,
+            auto_upc: autoUpc,
+            catalog_number: authoritativeCatalog,
+            release_type: releaseType,
+            type:
+              releaseType === "album"
+                ? "Album"
+                : releaseType === "ep"
+                ? "EP"
+                : "Single",
+            artwork_url: artworkUrl,
+            cover_url: artworkUrl,
+            toolost_release_id: String(tooLostReleaseId),
+            status: "draft",
+          })
+          .select()
+          .single();
 
-        title:
-          "Too Lost draft created",
+      if (releaseError) throw releaseError;
 
-        message:
-          `Release "${title}" was created as a draft on Too Lost. Release ID: ${tooLostReleaseId}`,
+      // Upload every track. The server route now uploads the WAV,
+      // creates/updates the Too Lost track, and attaches the fileKey.
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i];
 
-        type:
-          "release",
+        alert(
+          `Uploading track ${i + 1} of ${tracks.length} to Supabase...`
+        );
 
-        is_read:
-          false,
+        const audioUrl = await uploadFile(
+          "release-audio",
+          track.audio as File
+        );
+
+        alert(
+          `Uploading track ${i + 1} of ${tracks.length} to Too Lost...`
+        );
+
+        // Do not invent an ISRC when Auto ISRC is enabled.
+        const requestedIsrc =
+          track.auto_isrc ? "" : track.isrc.trim();
+
+        const serverUploadResponse = await fetch(
+          "/api/toolost/upload-audio",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              releaseId: tooLostReleaseId,
+              fileName: track.audio?.name,
+              contentType:
+                track.audio?.type || "audio/wav",
+              audioUrl,
+              track: {
+                title: track.title,
+                artist: mainArtist,
+                isrc: requestedIsrc || undefined,
+                composer: track.composer,
+                lyricist: track.lyricist,
+                producer: track.producer,
+                publisher: track.publisher,
+                version: track.version,
+                language: track.language,
+                contentType: track.content_type,
+                explicit: track.explicit,
+              },
+            }),
+          }
+        );
+
+        const serverText =
+          await serverUploadResponse.text();
+
+        let serverData: any;
+
+        try {
+          serverData = JSON.parse(serverText);
+        } catch {
+          throw new Error(
+            `Track upload returned non-JSON (${serverUploadResponse.status}).`
+          );
+        }
+
+        if (
+          !serverUploadResponse.ok ||
+          !serverData.success
+        ) {
+          throw new Error(
+            serverData.error ||
+              serverData.tooLostResponse?.message ||
+              JSON.stringify(serverData)
+          );
+        }
+
+        const actualIsrc =
+          requestedIsrc ||
+          serverData.data?.isrc ||
+          serverData.track?.isrc ||
+          null;
+
+        const { error: trackError } =
+          await supabase.from("tracks").insert({
+            release_id: releaseData.id,
+            title: track.title,
+            artist_name: mainArtist,
+            isrc: actualIsrc,
+            auto_isrc: track.auto_isrc,
+            auto_isrc_enabled: track.auto_isrc,
+            previous_isrc:
+              track.previous_isrc_enabled
+                ? track.previous_isrc
+                : null,
+            audio_url: audioUrl,
+            track_number: i + 1,
+            explicit: track.explicit,
+            composer: track.composer,
+            lyricist: track.lyricist,
+            producer: track.producer,
+            publisher: track.publisher,
+            version: track.version,
+            language: track.language,
+            content_type: track.content_type,
+            toolost_file_key: serverData.fileKey || null,
+          });
+
+        if (trackError) throw trackError;
+      }
+
+      await supabase.from("notifications").insert({
+        user_id: userData.user.id,
+        title: "Too Lost draft created",
+        message: `Release "${title}" was created as a draft on Too Lost. Release ID: ${tooLostReleaseId}`,
+        type: "release",
+        is_read: false,
       });
 
-    // -----------------------------------------
-    // SUCCESS
-    // -----------------------------------------
+      alert(
+        `Release draft created successfully on Too Lost!\n\nToo Lost Release ID: ${tooLostReleaseId}\n\nStatus: DRAFT`
+      );
 
-    alert(
-      `Release draft created successfully on Too Lost!\n\nToo Lost Release ID: ${tooLostReleaseId}\n\nStatus: DRAFT`
-    );
-
-    router.push(
-      `/releases/${releaseData.id}`
-    );
-
-  } catch (err: any) {
-    console.error(
-      "Release submission error:",
-      err
-    );
-
-    alert(
-      err?.message ||
-        "Something went wrong while creating the release."
-    );
-  } finally {
-    setLoading(false);
+      router.push(`/releases/${releaseData.id}`);
+    } catch (err: any) {
+      console.error("Release submission error:", err);
+      alert(
+        err?.message ||
+          "Something went wrong while creating the release."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   return (
     <main style={pageStyle}>
       <div style={topSpacer} />
 
       <div style={topNav}>
-        <button onClick={() => router.push("/releases")} style={exitBtn}>
+        <button
+          type="button"
+          onClick={() => router.push("/releases")}
+          style={exitBtn}
+        >
           ← Exit
         </button>
 
-        <button
-  type="button"
-  disabled={loading}
-  onClick={async () => {
-    try {
-      setLoading(true);
-
-      const connectionResponse =
-        await fetch("/api/toolost/me", {
-          cache: "no-store",
-        });
-
-      const connectionData =
-        await connectionResponse.json();
-
-      if (
-        !connectionResponse.ok ||
-        !connectionData.connected
-      ) {
-        alert(
-          "Please connect Too Lost first."
-        );
-        return;
-      }
-
-      const tooLostReleaseId =
-        prompt(
-          "Enter the Too Lost Release ID:"
-        );
-
-      if (!tooLostReleaseId) {
-        return;
-      }
-
-      const response =
-        await fetch(
-          "/api/toolost/releases/submit",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              releaseId:
-                tooLostReleaseId,
-            }),
-          }
-        );
-
-      const text =
-        await response.text();
-
-      let data: any;
-
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(
-          `Too Lost returned non-JSON (${response.status}): ${text.slice(
-            0,
-            1000
-          )}`
-        );
-      }
-
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ||
-            JSON.stringify(data)
-        );
-      }
-
-      alert(
-        "✓ Release submitted successfully to Too Lost!"
-      );
-
-      console.log(
-        "Too Lost submit result:",
-        data
-      );
-    } catch (error) {
-      console.error(error);
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Too Lost submission failed."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }}
-  className="rounded-xl bg-green-600 px-6 py-3 font-semibold text-white disabled:opacity-50"
->
-  {loading
-    ? "Submitting..."
-    : "Submit to Too Lost"}
-</button>
-
+        <div style={stepsBar}>
+          {steps.map((step) => (
+            <button
+              type="button"
+              key={step}
+              onClick={() => setActiveStep(step)}
+              style={{
+                ...stepBtn,
+                color:
+                  activeStep === step
+                    ? "#60A5FA"
+                    : "#94A3B8",
+                borderBottom:
+                  activeStep === step
+                    ? "2px solid #2563EB"
+                    : "2px solid transparent",
+              }}
+            >
+              {step}
+            </button>
+          ))}
+        </div>
       </div>
 
       <form onSubmit={submitRelease} style={layout}>
         <section style={mainPanel}>
           <div style={progressBox}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
               <strong>Release completion</strong>
               <strong>{completion}%</strong>
             </div>
             <div style={progressTrack}>
-              <div style={{ ...progressFill, width: `${completion}%` }} />
+              <div
+                style={{
+                  ...progressFill,
+                  width: `${completion}%`,
+                }}
+              />
             </div>
           </div>
 
@@ -969,40 +767,109 @@ export default function NewReleasePage() {
               <div style={twoCol}>
                 <div>
                   <label>Title *</label>
-                  <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={inputStyle} required />
+                  <input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Title"
+                    style={inputStyle}
+                    required
+                  />
 
                   <label>Version</label>
-                  <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Original, Remix, Lofi, DJ Mix" style={inputStyle} />
+                  <input
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                    placeholder="Original, Remix, Lofi, DJ Mix"
+                    style={inputStyle}
+                  />
 
                   <label>Release type *</label>
-                  <select value={releaseType} onChange={(e) => setReleaseType(e.target.value)} style={inputStyle}>
+                  <select
+                    value={releaseType}
+                    onChange={(e) =>
+                      setReleaseType(e.target.value)
+                    }
+                    style={inputStyle}
+                  >
                     <option value="single">Single</option>
                     <option value="ep">EP</option>
                     <option value="album">Album</option>
                   </select>
 
                   <label>Genre *</label>
-                  <select value={genre} onChange={(e) => setGenre(e.target.value)} style={inputStyle} required>
+                  <select
+                    value={genre}
+                    onChange={(e) => setGenre(e.target.value)}
+                    style={inputStyle}
+                    required
+                  >
                     <option value="">Select Genre</option>
-                    {genreOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                    {genreOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
                   </select>
+
+                  <label>Subgenre</label>
+                  <input
+                    value={subgenre}
+                    onChange={(e) =>
+                      setSubgenre(e.target.value)
+                    }
+                    placeholder="e.g. Romantic, Ghazal, Acoustic"
+                    style={inputStyle}
+                  />
                 </div>
 
                 <div>
                   <label>Release date *</label>
-                  <input type="date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} style={inputStyle} required />
+                  <input
+                    type="date"
+                    value={releaseDate}
+                    onChange={(e) =>
+                      setReleaseDate(e.target.value)
+                    }
+                    style={inputStyle}
+                    required
+                  />
 
-                  <label>Music created date *</label>
-                  <input type="date" value={musicCreatedDate} onChange={(e) => setMusicCreatedDate(e.target.value)} style={inputStyle} required />
+                  <label>Original release date *</label>
+                  <input
+                    type="date"
+                    value={originalReleaseDate}
+                    onChange={(e) =>
+                      setOriginalReleaseDate(e.target.value)
+                    }
+                    style={inputStyle}
+                    required
+                  />
 
                   <label>Language *</label>
-                  <select value={language} onChange={(e) => setLanguage(e.target.value)} style={inputStyle} required>
+                  <select
+                    value={language}
+                    onChange={(e) =>
+                      setLanguage(e.target.value)
+                    }
+                    style={inputStyle}
+                    required
+                  >
                     <option value="">Select Language</option>
-                    {languageOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                    {languageOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
                   </select>
 
                   <label>Music type *</label>
-                  <select value={musicType} onChange={(e) => setMusicType(e.target.value)} style={inputStyle}>
+                  <select
+                    value={musicType}
+                    onChange={(e) =>
+                      setMusicType(e.target.value)
+                    }
+                    style={inputStyle}
+                  >
                     <option value="original">Original</option>
                     <option value="ai_music">AI Music</option>
                     <option value="dj_remix">DJ Remix</option>
@@ -1010,68 +877,176 @@ export default function NewReleasePage() {
                     <option value="cover">Cover Version</option>
                     <option value="remake">Remake</option>
                   </select>
+
+                  <label>Catalog Number</label>
+                  <input
+                    value={catalogNumber}
+                    onChange={(e) =>
+                      setCatalogNumber(e.target.value)
+                    }
+                    placeholder="Leave blank for Too Lost auto assignment"
+                    style={inputStyle}
+                  />
                 </div>
               </div>
 
-              <div style={infoBox}>Select Various Artists if your release is a collection of 5 or more different artists.</div>
+              <div style={infoBox}>
+                Auto UPC/ISRC no longer generates fake/random NX codes.
+                When enabled, the authoritative identifier is taken from
+                Too Lost when it is returned by the API.
+              </div>
 
               <h3>Release performers</h3>
+
               {artists.map((artist, index) => (
                 <div key={index} style={artistRow}>
                   <input
                     value={artist}
-                    onChange={(e) => updateArtist(index, e.target.value)}
+                    onChange={(e) =>
+                      updateArtist(index, e.target.value)
+                    }
                     placeholder={`Release artist ${index + 1}`}
-                    style={{ ...inputStyle, marginBottom: 0 }}
+                    style={{
+                      ...inputStyle,
+                      marginBottom: 0,
+                    }}
                     required={index === 0}
                   />
-                  <button type="button" onClick={addArtist} style={smallBtn}>+ Add Artist</button>
+
+                  <button
+                    type="button"
+                    onClick={addArtist}
+                    style={smallBtn}
+                  >
+                    + Add Artist
+                  </button>
+
                   {artists.length > 1 && (
-                    <button type="button" onClick={() => removeArtist(index)} style={dangerBtn}>Remove</button>
+                    <button
+                      type="button"
+                      onClick={() => removeArtist(index)}
+                      style={dangerBtn}
+                    >
+                      Remove
+                    </button>
                   )}
                 </div>
               ))}
 
               <label>Label name *</label>
-              <input value={labelName} onChange={(e) => setLabelName(e.target.value)} placeholder="Label name" style={inputStyle} required />
+              <input
+                value={labelName}
+                onChange={(e) =>
+                  setLabelName(e.target.value)
+                }
+                placeholder="Label name"
+                style={inputStyle}
+                required
+              />
 
               <h3>Identifiers</h3>
+
               <label>UPC</label>
-              <input value={upc} onChange={(e) => setUpc(e.target.value)} disabled={autoUpc} placeholder="Leave blank for auto assign" style={inputStyle} />
+              <input
+                value={upc}
+                onChange={(e) => setUpc(e.target.value)}
+                disabled={autoUpc}
+                placeholder="Leave blank for Too Lost auto assignment"
+                style={inputStyle}
+              />
 
               <label style={checkLabel}>
-                <input type="checkbox" checked={autoUpc} disabled={previouslyReleased} onChange={(e) => setAutoUpc(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={autoUpc}
+                  disabled={previouslyReleased}
+                  onChange={(e) =>
+                    setAutoUpc(e.target.checked)
+                  }
+                />
                 Assign UPC automatically
               </label>
 
               <label style={checkLabel}>
-                <input type="checkbox" checked={previouslyReleased} onChange={(e) => handlePreviouslyReleased(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={previouslyReleased}
+                  onChange={(e) =>
+                    handlePreviouslyReleased(
+                      e.target.checked
+                    )
+                  }
+                />
                 This music was previously released
               </label>
 
               {previouslyReleased && (
                 <>
                   <label>Previous UPC / EAN *</label>
-                  <input value={previousUpc} onChange={(e) => setPreviousUpc(e.target.value)} placeholder="Old UPC" style={inputStyle} />
+                  <input
+                    value={previousUpc}
+                    onChange={(e) =>
+                      setPreviousUpc(e.target.value)
+                    }
+                    placeholder="Old UPC"
+                    style={inputStyle}
+                  />
                 </>
               )}
 
               <label style={checkLabel}>
-                <input type="checkbox" checked={contentIdRequired} onChange={(e) => setContentIdRequired(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={contentIdRequired}
+                  onChange={(e) =>
+                    setContentIdRequired(
+                      e.target.checked
+                    )
+                  }
+                />
                 Enable Content ID / YouTube claiming
               </label>
 
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Files" && (
             <>
               <h3>Files</h3>
-              <label>Optional music license / permission PDF</label>
-              <input type="file" accept="application/pdf,image/*" onChange={(e) => setLicenseFile(e.target.files?.[0] || null)} style={inputStyle} />
-              <p style={mutedText}>Upload license only if this release is remix, cover, remake, sampled, leased beat, or third-party content.</p>
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+
+              <label>
+                Optional music license / permission PDF
+              </label>
+
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                onChange={(e) =>
+                  setLicenseFile(
+                    e.target.files?.[0] || null
+                  )
+                }
+                style={inputStyle}
+              />
+
+              <p style={mutedText}>
+                Upload license only if this release is remix,
+                cover, remake, sampled, leased beat, or
+                third-party content.
+              </p>
+
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
@@ -1080,8 +1055,21 @@ export default function NewReleasePage() {
               <div style={sectionHeader}>
                 <h3>Recordings / Tracks</h3>
                 <div>
-                  <button type="button" onClick={copyFirstTrackMetadata} style={smallBtn}>Copy first track metadata to all</button>
-                  <button type="button" onClick={addTrack} style={smallBtn}>+ Add Track</button>
+                  <button
+                    type="button"
+                    onClick={copyFirstTrackMetadata}
+                    style={smallBtn}
+                  >
+                    Copy first track metadata to all
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={addTrack}
+                    style={smallBtn}
+                  >
+                    + Add Track
+                  </button>
                 </div>
               </div>
 
@@ -1089,56 +1077,196 @@ export default function NewReleasePage() {
                 <div key={index} style={trackCard}>
                   <div style={sectionHeader}>
                     <h3>Track {index + 1}</h3>
-                    <button type="button" onClick={() => removeTrack(index)} style={dangerBtn}>Remove</button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        removeTrack(index)
+                      }
+                      style={dangerBtn}
+                    >
+                      Remove
+                    </button>
                   </div>
 
                   <div style={twoCol}>
                     <div>
                       <label>Track title *</label>
-                      <input value={track.title} onChange={(e) => updateTrack(index, "title", e.target.value)} style={inputStyle} required />
+                      <input
+                        value={track.title}
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "title",
+                            e.target.value
+                          )
+                        }
+                        style={inputStyle}
+                        required
+                      />
 
                       <label>Version</label>
-                      <input value={track.version} onChange={(e) => updateTrack(index, "version", e.target.value)} placeholder="Original, Remix, Lofi" style={inputStyle} />
+                      <input
+                        value={track.version}
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "version",
+                            e.target.value
+                          )
+                        }
+                        placeholder="Original, Remix, Lofi"
+                        style={inputStyle}
+                      />
 
                       <label>ISRC</label>
-                      <input value={track.isrc} disabled={track.auto_isrc} onChange={(e) => updateTrack(index, "isrc", e.target.value)} placeholder="Leave blank for auto assign" style={inputStyle} />
+                      <input
+                        value={track.isrc}
+                        disabled={track.auto_isrc}
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "isrc",
+                            e.target.value
+                          )
+                        }
+                        placeholder="Leave blank for Too Lost auto assignment"
+                        style={inputStyle}
+                      />
 
                       <label style={checkLabel}>
-                        <input type="checkbox" checked={track.auto_isrc} onChange={(e) => updateTrack(index, "auto_isrc", e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          checked={track.auto_isrc}
+                          onChange={(e) =>
+                            updateTrack(
+                              index,
+                              "auto_isrc",
+                              e.target.checked
+                            )
+                          }
+                        />
                         Assign ISRC automatically
                       </label>
 
                       <label style={checkLabel}>
-                        <input type="checkbox" checked={track.previous_isrc_enabled} onChange={(e) => updateTrack(index, "previous_isrc_enabled", e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          checked={
+                            track.previous_isrc_enabled
+                          }
+                          onChange={(e) =>
+                            updateTrack(
+                              index,
+                              "previous_isrc_enabled",
+                              e.target.checked
+                            )
+                          }
+                        />
                         Add Previous ISRC
                       </label>
 
                       {track.previous_isrc_enabled && (
-                        <input value={track.previous_isrc} onChange={(e) => updateTrack(index, "previous_isrc", e.target.value)} placeholder="Previous ISRC" style={inputStyle} />
+                        <input
+                          value={track.previous_isrc}
+                          onChange={(e) =>
+                            updateTrack(
+                              index,
+                              "previous_isrc",
+                              e.target.value
+                            )
+                          }
+                          placeholder="Previous ISRC"
+                          style={inputStyle}
+                        />
                       )}
                     </div>
 
                     <div>
                       <label>Content type</label>
-                      <select value={track.content_type} onChange={(e) => updateTrack(index, "content_type", e.target.value)} style={inputStyle}>
-                        <option value="original">Original</option>
-                        <option value="ai_music">AI Music</option>
-                        <option value="dj_remix">DJ Remix</option>
-                        <option value="lofi">Lofi</option>
-                        <option value="cover">Cover</option>
+                      <select
+                        value={track.content_type}
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "content_type",
+                            e.target.value
+                          )
+                        }
+                        style={inputStyle}
+                      >
+                        <option value="original">
+                          Original
+                        </option>
+                        <option value="ai_music">
+                          AI Music
+                        </option>
+                        <option value="dj_remix">
+                          DJ Remix
+                        </option>
+                        <option value="lofi">
+                          Lofi
+                        </option>
+                        <option value="cover">
+                          Cover
+                        </option>
                       </select>
 
                       <label>Track language</label>
-                      <select value={track.language} onChange={(e) => updateTrack(index, "language", e.target.value)} style={inputStyle}>
-                        <option value="">Select Language</option>
-                        {languageOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                      <select
+                        value={track.language}
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "language",
+                            e.target.value
+                          )
+                        }
+                        style={inputStyle}
+                      >
+                        <option value="">
+                          Select Language
+                        </option>
+                        {languageOptions.map(
+                          (item) => (
+                            <option
+                              key={item}
+                              value={item}
+                            >
+                              {item}
+                            </option>
+                          )
+                        )}
                       </select>
 
                       <label>Audio file *</label>
-                      <input type="file" accept="audio/*" onChange={(e) => updateTrack(index, "audio", e.target.files?.[0] || null)} style={inputStyle} required />
+                      <input
+                        type="file"
+                        accept="audio/*"
+                        onChange={(e) =>
+                          updateTrack(
+                            index,
+                            "audio",
+                            e.target.files?.[0] ||
+                              null
+                          )
+                        }
+                        style={inputStyle}
+                        required
+                      />
 
                       <label style={checkLabel}>
-                        <input type="checkbox" checked={track.explicit} onChange={(e) => updateTrack(index, "explicit", e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          checked={track.explicit}
+                          onChange={(e) =>
+                            updateTrack(
+                              index,
+                              "explicit",
+                              e.target.checked
+                            )
+                          }
+                        />
                         Explicit content
                       </label>
                     </div>
@@ -1146,87 +1274,304 @@ export default function NewReleasePage() {
                 </div>
               ))}
 
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Authors" && (
             <>
               <h3>Authors & Contributors</h3>
+
               {tracks.map((track, index) => (
-                <div key={index} style={trackCard}>
-                  <h3>{index + 1}. {track.title || "Untitled Track"}</h3>
+                <div
+                  key={index}
+                  style={trackCard}
+                >
+                  <h3>
+                    {index + 1}.{" "}
+                    {track.title || "Untitled Track"}
+                  </h3>
+
                   <div style={twoCol}>
-                    <PersonInput label="Composer" value={track.composer} onChange={(v: string) => updateTrack(index, "composer", v)} onAdd={() => addPersonField(index, "composer")} />
-                    <PersonInput label="Producer" value={track.producer} onChange={(v: string) => updateTrack(index, "producer", v)} onAdd={() => addPersonField(index, "producer")} />
-                    <PersonInput label="Lyricist" value={track.lyricist} onChange={(v: string) => updateTrack(index, "lyricist", v)} onAdd={() => addPersonField(index, "lyricist")} />
-                    <PersonInput label="Publisher" value={track.publisher} onChange={(v: string) => updateTrack(index, "publisher", v)} onAdd={() => addPersonField(index, "publisher")} />
+                    <PersonInput
+                      label="Composer"
+                      value={track.composer}
+                      onChange={(v: string) =>
+                        updateTrack(
+                          index,
+                          "composer",
+                          v
+                        )
+                      }
+                      onAdd={() =>
+                        addPersonField(
+                          index,
+                          "composer"
+                        )
+                      }
+                    />
+
+                    <PersonInput
+                      label="Producer"
+                      value={track.producer}
+                      onChange={(v: string) =>
+                        updateTrack(
+                          index,
+                          "producer",
+                          v
+                        )
+                      }
+                      onAdd={() =>
+                        addPersonField(
+                          index,
+                          "producer"
+                        )
+                      }
+                    />
+
+                    <PersonInput
+                      label="Lyricist"
+                      value={track.lyricist}
+                      onChange={(v: string) =>
+                        updateTrack(
+                          index,
+                          "lyricist",
+                          v
+                        )
+                      }
+                      onAdd={() =>
+                        addPersonField(
+                          index,
+                          "lyricist"
+                        )
+                      }
+                    />
+
+                    <PersonInput
+                      label="Publisher"
+                      value={track.publisher}
+                      onChange={(v: string) =>
+                        updateTrack(
+                          index,
+                          "publisher",
+                          v
+                        )
+                      }
+                      onAdd={() =>
+                        addPersonField(
+                          index,
+                          "publisher"
+                        )
+                      }
+                    />
                   </div>
                 </div>
               ))}
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Lyrics" && (
             <>
               <h3>Lyrics</h3>
-              <textarea value={lyricsText} onChange={(e) => setLyricsText(e.target.value)} placeholder="Paste or write your song lyrics here..." style={textareaStyle} />
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+
+              <textarea
+                value={lyricsText}
+                onChange={(e) =>
+                  setLyricsText(e.target.value)
+                }
+                placeholder="Paste or write your song lyrics here..."
+                style={textareaStyle}
+              />
+
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Cover" && (
             <>
               <h3>Cover artwork</h3>
-              <label>Artwork JPG/PNG 3000x3000 *</label>
-              <input type="file" accept="image/png,image/jpeg" onChange={(e) => handleArtwork(e.target.files?.[0] || null)} style={inputStyle} required />
-              <p style={mutedText}>Recommended: 3000x3000 JPG/PNG. Agar image 3000x3000 nahi hoga to upload accept nahi hoga.</p>
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+
+              <label>
+                Artwork JPG/PNG 3000x3000 *
+              </label>
+
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={(e) =>
+                  handleArtwork(
+                    e.target.files?.[0] || null
+                  )
+                }
+                style={inputStyle}
+                required
+              />
+
+              <p style={mutedText}>
+                3000x3000 JPG/PNG required.
+                Artwork is uploaded to Supabase and then
+                attached to the same Too Lost release.
+              </p>
+
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Distribution" && (
             <>
               <h3>Distribution</h3>
+
               <h4>DSP Selection</h4>
+
               <div style={chipGrid}>
                 {dspOptions.map((dsp) => (
-                  <button type="button" key={dsp} onClick={() => toggleDsp(dsp)} style={{ ...chip, background: selectedDSPs.includes(dsp) ? "#2563EB" : "#0B1020" }}>
-                    {selectedDSPs.includes(dsp) ? "✓ " : ""}{dsp}
+                  <button
+                    type="button"
+                    key={dsp}
+                    onClick={() =>
+                      toggleDsp(dsp)
+                    }
+                    style={{
+                      ...chip,
+                      background:
+                        selectedDSPs.includes(dsp)
+                          ? "#2563EB"
+                          : "#0B1020",
+                    }}
+                  >
+                    {selectedDSPs.includes(dsp)
+                      ? "✓ "
+                      : ""}
+                    {dsp}
                   </button>
                 ))}
               </div>
 
               <h4>Country Selection</h4>
+
               <div style={chipGrid}>
-                {countryOptions.map((country) => (
-                  <button type="button" key={country} onClick={() => toggleCountry(country)} style={{ ...chip, background: selectedCountries.includes(country) ? "#2563EB" : "#0B1020" }}>
-                    {selectedCountries.includes(country) ? "✓ " : ""}{country}
-                  </button>
-                ))}
+                {countryOptions.map(
+                  (country) => (
+                    <button
+                      type="button"
+                      key={country}
+                      onClick={() =>
+                        toggleCountry(country)
+                      }
+                      style={{
+                        ...chip,
+                        background:
+                          selectedCountries.includes(
+                            country
+                          )
+                            ? "#2563EB"
+                            : "#0B1020",
+                      }}
+                    >
+                      {selectedCountries.includes(
+                        country
+                      )
+                        ? "✓ "
+                        : ""}
+                      {country}
+                    </button>
+                  )
+                )}
               </div>
-              <StepButtons goBackStep={goBackStep} goNext={goNext} activeStep={activeStep} loading={loading} />
+
+              <StepButtons
+                goBackStep={goBackStep}
+                goNext={goNext}
+                activeStep={activeStep}
+                loading={loading}
+              />
             </>
           )}
 
           {activeStep === "Confirm" && (
             <>
               <h3>Confirm submission</h3>
+
               <div style={confirmGrid}>
-                <div style={confirmCard}>Title: {title || "-"}</div>
-                <div style={confirmCard}>Artist: {mainArtist || "-"}</div>
-                <div style={confirmCard}>Type: {releaseType}</div>
-                <div style={confirmCard}>Music: {musicType}</div>
-                <div style={confirmCard}>Tracks: {tracks.length}</div>
-                <div style={confirmCard}>DSPs: {selectedDSPs.length}</div>
-                <div style={confirmCard}>Countries: {selectedCountries.join(", ")}</div>
-                <div style={confirmCard}>Content ID: {contentIdRequired ? "Yes" : "No"}</div>
+                <div style={confirmCard}>
+                  Title: {title || "-"}
+                </div>
+                <div style={confirmCard}>
+                  Artist: {mainArtist || "-"}
+                </div>
+                <div style={confirmCard}>
+                  Type: {releaseType}
+                </div>
+                <div style={confirmCard}>
+                  Label: {labelName || "-"}
+                </div>
+                <div style={confirmCard}>
+                  Genre: {genre || "-"}
+                </div>
+                <div style={confirmCard}>
+                  Subgenre: {subgenre || "-"}
+                </div>
+                <div style={confirmCard}>
+                  Tracks: {tracks.length}
+                </div>
+                <div style={confirmCard}>
+                  Catalog: {catalogNumber || "Too Lost auto"}
+                </div>
+                <div style={confirmCard}>
+                  UPC: {autoUpc ? "Too Lost auto" : upc || "-"}
+                </div>
+                <div style={confirmCard}>
+                  DSPs: {selectedDSPs.length}
+                </div>
+                <div style={confirmCard}>
+                  Countries: {selectedCountries.join(", ")}
+                </div>
+                <div style={confirmCard}>
+                  Content ID:{" "}
+                  {contentIdRequired ? "Yes" : "No"}
+                </div>
               </div>
 
               <div style={bottomButtons}>
-                <button type="button" onClick={goBackStep} style={secondaryBtn}>Back</button>
-                <button type="submit" disabled={loading} style={submitBtn}>{loading ? "Uploading..." : "Submit Release"}</button>
+                <button
+                  type="button"
+                  onClick={goBackStep}
+                  style={secondaryBtn}
+                >
+                  Back
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={submitBtn}
+                >
+                  {loading
+                    ? "Uploading..."
+                    : "Submit Release"}
+                </button>
               </div>
             </>
           )}
@@ -1234,68 +1579,357 @@ export default function NewReleasePage() {
 
         <aside style={helpPanel}>
           <h3>Help</h3>
-          {artworkPreview ? <img src={artworkPreview} alt="Artwork preview" style={previewArt} /> : <div style={emptyPreview}>Cover Preview</div>}
-          <p>We do not recommend using emoji or special characters in release title.</p>
-          <p>If release was previously distributed, please enter old UPC and ISRC.</p>
-          <p>For remix, cover, AI, sampled, or leased beat, upload license if available.</p>
-          <div style={qualityBox}><strong>Metadata Quality</strong><h2>{completion}%</h2></div>
+
+          {artworkPreview ? (
+            <img
+              src={artworkPreview}
+              alt="Artwork preview"
+              style={previewArt}
+            />
+          ) : (
+            <div style={emptyPreview}>
+              Cover Preview
+            </div>
+          )}
+
+          <p>
+            Auto UPC and Auto ISRC do not create fake
+            identifiers. The dashboard stores the
+            authoritative values returned by Too Lost.
+          </p>
+
+          <p>
+            Release metadata, artwork and tracks are
+            uploaded to the same Too Lost release ID.
+          </p>
+
+          <div style={qualityBox}>
+            <strong>Metadata Quality</strong>
+            <h2>{completion}%</h2>
+          </div>
         </aside>
       </form>
     </main>
   );
 }
 
-function StepButtons({ goBackStep, goNext, activeStep, loading }: any) {
+function StepButtons({
+  goBackStep,
+  goNext,
+  activeStep,
+  loading,
+}: any) {
   return (
     <div style={bottomButtons}>
-      {activeStep !== "Release" && <button type="button" onClick={goBackStep} style={secondaryBtn}>Back</button>}
-      {activeStep !== "Confirm" && <button type="button" onClick={goNext} disabled={loading} style={submitBtn}>Next</button>}
+      {activeStep !== "Release" && (
+        <button
+          type="button"
+          onClick={goBackStep}
+          style={secondaryBtn}
+        >
+          Back
+        </button>
+      )}
+
+      {activeStep !== "Confirm" && (
+        <button
+          type="button"
+          onClick={goNext}
+          disabled={loading}
+          style={submitBtn}
+        >
+          Next
+        </button>
+      )}
     </div>
   );
 }
 
-function PersonInput({ label, value, onChange, onAdd }: any) {
+function PersonInput({
+  label,
+  value,
+  onChange,
+  onAdd,
+}: any) {
   return (
     <div>
       <label>{label}</label>
+
       <div style={artistRow}>
-        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={`${label} name`} style={{ ...inputStyle, marginBottom: 0 }} />
-        <button type="button" onClick={onAdd} style={smallBtn}>+ Add</button>
+        <input
+          value={value}
+          onChange={(e) =>
+            onChange(e.target.value)
+          }
+          placeholder={`${label} name`}
+          style={{
+            ...inputStyle,
+            marginBottom: 0,
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={onAdd}
+          style={smallBtn}
+        >
+          + Add
+        </button>
       </div>
     </div>
   );
 }
 
-const pageStyle: CSSProperties = { minHeight: "100vh", background: "#050816", color: "white", fontFamily: "Arial, sans-serif" };
-const topSpacer: CSSProperties = { height: "10px", background: "#050816" };
-const topNav: CSSProperties = { display: "flex", alignItems: "center", background: "#111827", borderBottom: "1px solid #1F2937", height: "56px" };
-const exitBtn: CSSProperties = { marginLeft: "12px", border: "1px solid #334155", background: "#0B1020", color: "white", borderRadius: "8px", padding: "8px 12px", cursor: "pointer" };
-const stepsBar: CSSProperties = { flex: 1, display: "grid", gridTemplateColumns: "repeat(8, 1fr)", marginLeft: "12px" };
-const stepBtn: CSSProperties = { height: "56px", border: "none", background: "#111827", color: "#94A3B8", cursor: "pointer", appearance: "none", outline: "none" };
-const layout: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 260px", gap: "0" };
-const mainPanel: CSSProperties = { margin: "18px", background: "#111827", borderRadius: "16px", padding: "24px", border: "1px solid #1F2937", minHeight: "calc(100vh - 100px)" };
-const helpPanel: CSSProperties = { background: "#0B1020", padding: "24px", minHeight: "calc(100vh - 66px)", borderLeft: "1px solid #1F2937", color: "white" };
-const inputStyle: CSSProperties = { width: "100%", height: "42px", padding: "8px 12px", marginTop: "6px", marginBottom: "14px", borderRadius: "8px", border: "1px solid #334155", background: "#0B1020", color: "white", colorScheme: "dark" };
-const textareaStyle: CSSProperties = { ...inputStyle, height: "260px", resize: "vertical" };
-const twoCol: CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "22px" };
-const infoBox: CSSProperties = { background: "#0B1020", border: "1px solid #1F2937", padding: "12px", borderRadius: "8px", margin: "14px 0", color: "#CBD5E1" };
-const checkLabel: CSSProperties = { display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" };
-const progressBox: CSSProperties = { marginBottom: "18px" };
-const progressTrack: CSSProperties = { height: "8px", background: "#0B1020", borderRadius: "999px", marginTop: "8px", border: "1px solid #1F2937" };
-const progressFill: CSSProperties = { height: "8px", background: "#2563EB", borderRadius: "999px" };
-const trackCard: CSSProperties = { background: "#0B1020", border: "1px solid #1F2937", borderRadius: "12px", padding: "16px", marginBottom: "16px" };
-const sectionHeader: CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" };
-const smallBtn: CSSProperties = { marginLeft: "8px", padding: "9px 12px", border: "none", borderRadius: "8px", background: "#2563EB", color: "white", cursor: "pointer", whiteSpace: "nowrap" };
-const dangerBtn: CSSProperties = { ...smallBtn, background: "#DC2626" };
-const secondaryBtn: CSSProperties = { padding: "12px 18px", borderRadius: "10px", border: "1px solid #334155", background: "#0B1020", color: "white", cursor: "pointer" };
-const chipGrid: CSSProperties = { display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "20px" };
-const chip: CSSProperties = { padding: "10px 14px", borderRadius: "999px", border: "1px solid #334155", color: "white", cursor: "pointer" };
-const previewArt: CSSProperties = { width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: "10px", marginBottom: "18px" };
-const emptyPreview: CSSProperties = { width: "100%", aspectRatio: "1/1", background: "#111827", border: "1px dashed #334155", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", color: "#94A3B8", marginBottom: "18px" };
-const qualityBox: CSSProperties = { marginTop: "20px", background: "#111827", border: "1px solid #1F2937", padding: "16px", borderRadius: "10px" };
-const confirmGrid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "12px" };
-const confirmCard: CSSProperties = { background: "#0B1020", border: "1px solid #1F2937", padding: "14px", borderRadius: "8px" };
-const submitBtn: CSSProperties = { padding: "12px 18px", border: "none", borderRadius: "10px", background: "#2563EB", color: "white", fontWeight: "bold", cursor: "pointer" };
-const bottomButtons: CSSProperties = { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "24px" };
-const artistRow: CSSProperties = { display: "flex", gap: "8px", alignItems: "center", marginBottom: "14px" };
-const mutedText: CSSProperties = { color: "#94A3B8" };
+const pageStyle: CSSProperties = {
+  minHeight: "100vh",
+  background: "#050816",
+  color: "white",
+  fontFamily: "Arial, sans-serif",
+};
+
+const topSpacer: CSSProperties = {
+  height: "10px",
+  background: "#050816",
+};
+
+const topNav: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  background: "#111827",
+  borderBottom: "1px solid #1F2937",
+  minHeight: "56px",
+};
+
+const exitBtn: CSSProperties = {
+  marginLeft: "12px",
+  border: "1px solid #334155",
+  background: "#0B1020",
+  color: "white",
+  borderRadius: "8px",
+  padding: "8px 12px",
+  cursor: "pointer",
+};
+
+const stepsBar: CSSProperties = {
+  flex: 1,
+  display: "grid",
+  gridTemplateColumns: "repeat(8, 1fr)",
+  marginLeft: "12px",
+};
+
+const stepBtn: CSSProperties = {
+  height: "56px",
+  border: "none",
+  background: "#111827",
+  color: "#94A3B8",
+  cursor: "pointer",
+  appearance: "none",
+  outline: "none",
+};
+
+const layout: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 260px",
+  gap: "0",
+};
+
+const mainPanel: CSSProperties = {
+  margin: "18px",
+  background: "#111827",
+  borderRadius: "16px",
+  padding: "24px",
+  border: "1px solid #1F2937",
+  minHeight: "calc(100vh - 100px)",
+};
+
+const helpPanel: CSSProperties = {
+  background: "#0B1020",
+  padding: "24px",
+  minHeight: "calc(100vh - 66px)",
+  borderLeft: "1px solid #1F2937",
+  color: "white",
+};
+
+const inputStyle: CSSProperties = {
+  width: "100%",
+  height: "42px",
+  padding: "8px 12px",
+  marginTop: "6px",
+  marginBottom: "14px",
+  borderRadius: "8px",
+  border: "1px solid #334155",
+  background: "#0B1020",
+  color: "white",
+  colorScheme: "dark",
+};
+
+const textareaStyle: CSSProperties = {
+  ...inputStyle,
+  height: "260px",
+  resize: "vertical",
+};
+
+const twoCol: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "22px",
+};
+
+const infoBox: CSSProperties = {
+  background: "#0B1020",
+  border: "1px solid #1F2937",
+  padding: "12px",
+  borderRadius: "8px",
+  margin: "14px 0",
+  color: "#CBD5E1",
+};
+
+const checkLabel: CSSProperties = {
+  display: "flex",
+  gap: "8px",
+  alignItems: "center",
+  marginBottom: "12px",
+};
+
+const progressBox: CSSProperties = {
+  marginBottom: "18px",
+};
+
+const progressTrack: CSSProperties = {
+  height: "8px",
+  background: "#0B1020",
+  borderRadius: "999px",
+  marginTop: "8px",
+  border: "1px solid #1F2937",
+};
+
+const progressFill: CSSProperties = {
+  height: "8px",
+  background: "#2563EB",
+  borderRadius: "999px",
+};
+
+const trackCard: CSSProperties = {
+  background: "#0B1020",
+  border: "1px solid #1F2937",
+  borderRadius: "12px",
+  padding: "16px",
+  marginBottom: "16px",
+};
+
+const sectionHeader: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "10px",
+};
+
+const smallBtn: CSSProperties = {
+  marginLeft: "8px",
+  padding: "9px 12px",
+  border: "none",
+  borderRadius: "8px",
+  background: "#2563EB",
+  color: "white",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const dangerBtn: CSSProperties = {
+  ...smallBtn,
+  background: "#DC2626",
+};
+
+const secondaryBtn: CSSProperties = {
+  padding: "12px 18px",
+  borderRadius: "10px",
+  border: "1px solid #334155",
+  background: "#0B1020",
+  color: "white",
+  cursor: "pointer",
+};
+
+const chipGrid: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "10px",
+  marginBottom: "20px",
+};
+
+const chip: CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: "999px",
+  border: "1px solid #334155",
+  color: "white",
+  cursor: "pointer",
+};
+
+const previewArt: CSSProperties = {
+  width: "100%",
+  aspectRatio: "1/1",
+  objectFit: "cover",
+  borderRadius: "10px",
+  marginBottom: "18px",
+};
+
+const emptyPreview: CSSProperties = {
+  width: "100%",
+  aspectRatio: "1/1",
+  background: "#111827",
+  border: "1px dashed #334155",
+  borderRadius: "10px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#94A3B8",
+  marginBottom: "18px",
+};
+
+const qualityBox: CSSProperties = {
+  marginTop: "20px",
+  background: "#111827",
+  border: "1px solid #1F2937",
+  padding: "16px",
+  borderRadius: "10px",
+};
+
+const confirmGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, 1fr)",
+  gap: "12px",
+};
+
+const confirmCard: CSSProperties = {
+  background: "#0B1020",
+  border: "1px solid #1F2937",
+  padding: "14px",
+  borderRadius: "8px",
+};
+
+const submitBtn: CSSProperties = {
+  padding: "12px 18px",
+  border: "none",
+  borderRadius: "10px",
+  background: "#2563EB",
+  color: "white",
+  fontWeight: "bold",
+  cursor: "pointer",
+};
+
+const bottomButtons: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: "10px",
+  marginTop: "24px",
+};
+
+const artistRow: CSSProperties = {
+  display: "flex",
+  gap: "8px",
+  alignItems: "center",
+  marginBottom: "14px",
+};
+
+const mutedText: CSSProperties = {
+  color: "#94A3B8",
+};
