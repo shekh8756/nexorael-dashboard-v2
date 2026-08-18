@@ -1,188 +1,177 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/app/lib/supabase-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getArtist(release: any) {
-  return (
-    release?.artist_name ||
-    release?.artistName ||
-    release?.artist ||
-    "Unknown Artist"
-  );
-}
-
-function getArtwork(release: any) {
-  return (
-    release?.artwork_url ||
-    release?.artworkUrl ||
-    release?.cover_url ||
-    release?.coverUrl ||
-    release?.cover ||
-    ""
-  );
-}
-
-function getToolostId(release: any) {
-  return (
-    release?.toolost_release_id ||
-    release?.toolostReleaseId ||
-    release?.toolost_id ||
-    null
-  );
-}
-
-function normalizeStatus(status: unknown) {
-  return String(status || "unknown")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-}
-
 export async function GET(request: NextRequest) {
   try {
-    /*
-     * ---------------------------------------------------------
-     * 1. AUTHENTICATION
-     * ---------------------------------------------------------
-     */
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    if (!url) {
       return NextResponse.json(
         {
           success: false,
-          error: "Unauthorized",
-        },
-        { status: 401 }
-      );
-    }
-
-    /*
-     * ---------------------------------------------------------
-     * 2. QUERY PARAMETERS
-     * ---------------------------------------------------------
-     */
-
-    const { searchParams } =
-      new URL(request.url);
-
-    const search =
-      searchParams.get("search")?.trim() || "";
-
-    const status =
-      searchParams.get("status")?.trim() || "all";
-
-    const userId =
-      searchParams.get("userId")?.trim() || "";
-
-    const whiteLabelId =
-      searchParams
-        .get("whiteLabelId")
-        ?.trim() || "";
-
-    /*
-     * ---------------------------------------------------------
-     * 3. GET RELEASES
-     * ---------------------------------------------------------
-     */
-
-    const {
-      data: releases,
-      error: releasesError,
-    } = await supabase
-      .from("releases")
-      .select("*")
-      .order("created_at", {
-        ascending: false,
-      });
-
-    if (releasesError) {
-      console.error(
-        "Admin releases database error:",
-        releasesError
-      );
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: releasesError.message,
+          step: "environment",
+          error: "NEXT_PUBLIC_SUPABASE_URL is missing",
         },
         { status: 500 }
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 4. GET USERS / PROFILES
-     * ---------------------------------------------------------
-     */
-
-    const {
-      data: profiles,
-      error: profilesError,
-    } = await supabase
-      .from("profiles")
-      .select("*");
-
-    if (profilesError) {
-      console.error(
-        "Admin profiles database error:",
-        profilesError
-      );
-
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return NextResponse.json(
         {
           success: false,
-          error: profilesError.message,
+          step: "environment",
+          error: "SUPABASE_SERVICE_ROLE_KEY is missing",
         },
         { status: 500 }
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 5. GET WHITE LABELS
-     * ---------------------------------------------------------
-     */
+    console.log("=================================");
+    console.log("ADMIN RELEASE API");
+    console.log("Supabase URL:", url);
+    console.log("Service key exists:", true);
+    console.log("=================================");
 
-    const {
-      data: whiteLabels,
-      error: whiteLabelsError,
-    } = await supabase
-      .from("white_labels")
-      .select("*");
+    // ---------------------------------------------
+    // STEP 1: TEST SUPABASE CONNECTION
+    // ---------------------------------------------
 
-    if (whiteLabelsError) {
-      console.error(
-        "Admin white labels database error:",
-        whiteLabelsError
-      );
+    let releases;
+
+    try {
+      const result = await supabaseAdmin
+        .from("releases")
+        .select("*")
+        .order("created_at", {
+          ascending: false,
+        });
+
+      console.log("RELEASE QUERY RESULT:", result);
+
+      if (result.error) {
+        return NextResponse.json(
+          {
+            success: false,
+            step: "releases_query",
+            error: result.error.message,
+            details: result.error,
+          },
+          { status: 500 }
+        );
+      }
+
+      releases = result.data || [];
+    } catch (error) {
+      console.error("RELEASE FETCH FAILED:", error);
 
       return NextResponse.json(
         {
           success: false,
-          error: whiteLabelsError.message,
+          step: "releases_fetch",
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
         },
         { status: 500 }
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 6. CREATE LOOKUP MAPS
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------
+    // STEP 2: PROFILES
+    // ---------------------------------------------
 
-    const profileMap =
-      new Map<string, any>();
+    let profiles: any[] = [];
 
-    for (const profile of profiles || []) {
+    try {
+      const result = await supabaseAdmin
+        .from("profiles")
+        .select("*");
+
+      console.log("PROFILE QUERY RESULT:", result);
+
+      if (result.error) {
+        return NextResponse.json(
+          {
+            success: false,
+            step: "profiles_query",
+            error: result.error.message,
+            details: result.error,
+          },
+          { status: 500 }
+        );
+      }
+
+      profiles = result.data || [];
+    } catch (error) {
+      console.error("PROFILE FETCH FAILED:", error);
+
+      return NextResponse.json(
+        {
+          success: false,
+          step: "profiles_fetch",
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
+        },
+        { status: 500 }
+      );
+    }
+
+    // ---------------------------------------------
+    // STEP 3: WHITE LABELS
+    // ---------------------------------------------
+
+    let whiteLabels: any[] = [];
+
+    try {
+      const result = await supabaseAdmin
+        .from("white_labels")
+        .select("*");
+
+      console.log("WHITE LABEL QUERY RESULT:", result);
+
+      if (result.error) {
+        return NextResponse.json(
+          {
+            success: false,
+            step: "white_labels_query",
+            error: result.error.message,
+            details: result.error,
+          },
+          { status: 500 }
+        );
+      }
+
+      whiteLabels = result.data || [];
+    } catch (error) {
+      console.error("WHITE LABEL FETCH FAILED:", error);
+
+      return NextResponse.json(
+        {
+          success: false,
+          step: "white_labels_fetch",
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
+        },
+        { status: 500 }
+      );
+    }
+
+    // ---------------------------------------------
+    // NORMALIZE DATA
+    // ---------------------------------------------
+
+    const profileMap = new Map<string, any>();
+
+    for (const profile of profiles) {
       if (profile?.id) {
         profileMap.set(
           String(profile.id),
@@ -191,10 +180,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const whiteLabelMap =
-      new Map<string, any>();
+    const whiteLabelMap = new Map<string, any>();
 
-    for (const label of whiteLabels || []) {
+    for (const label of whiteLabels) {
       if (label?.id) {
         whiteLabelMap.set(
           String(label.id),
@@ -203,58 +191,47 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 7. NORMALIZE RELEASE DATA
-     * ---------------------------------------------------------
-     */
-
-    let result = (releases || []).map(
+    const normalizedReleases = releases.map(
       (release: any) => {
-        const profile =
-          release?.user_id
-            ? profileMap.get(
-                String(release.user_id)
-              )
-            : null;
+        const profile = release?.user_id
+          ? profileMap.get(
+              String(release.user_id)
+            )
+          : null;
 
         const whiteLabel =
           release?.white_label_id
             ? whiteLabelMap.get(
-                String(
-                  release.white_label_id
-                )
+                String(release.white_label_id)
               )
             : null;
 
         const artist =
-          getArtist(release);
+          release?.artist_name ||
+          release?.artistName ||
+          release?.artist ||
+          "Unknown Artist";
 
         const artwork =
-          getArtwork(release);
+          release?.artwork_url ||
+          release?.artworkUrl ||
+          release?.cover_url ||
+          release?.coverUrl ||
+          release?.cover ||
+          "";
 
         const toolostReleaseId =
-          getToolostId(release);
+          release?.toolost_release_id ||
+          release?.toolostReleaseId ||
+          release?.toolost_id ||
+          null;
 
         return {
           ...release,
 
-          /*
-           * Artist
-           */
-          artist_name:
-            release?.artist_name ||
-            release?.artistName ||
-            artist,
+          artist_name: artist,
+          artistName: artist,
 
-          artistName:
-            release?.artistName ||
-            release?.artist_name ||
-            artist,
-
-          /*
-           * Artwork
-           */
           artwork_url:
             artwork || null,
 
@@ -266,18 +243,12 @@ export async function GET(request: NextRequest) {
             artwork ||
             null,
 
-          /*
-           * Too Lost
-           */
           toolost_release_id:
             toolostReleaseId,
 
           toolostReleaseId:
             toolostReleaseId,
 
-          /*
-           * User
-           */
           user: profile
             ? {
                 id: profile.id,
@@ -294,8 +265,7 @@ export async function GET(request: NextRequest) {
                   null,
 
                 email:
-                  profile.email ||
-                  null,
+                  profile.email || null,
 
                 role:
                   profile.role ||
@@ -314,55 +284,57 @@ export async function GET(request: NextRequest) {
             "Unknown User",
 
           user_email:
-            profile?.email ||
-            null,
+            profile?.email || null,
 
-          /*
-           * White Label
-           */
-          white_label:
-            whiteLabel
-              ? {
-                  id: whiteLabel.id,
+          white_label: whiteLabel
+            ? {
+                id: whiteLabel.id,
 
-                  name:
-                    whiteLabel.name ||
-                    whiteLabel.brand_name ||
-                    whiteLabel.label_name ||
-                    "Unknown Label",
+                name:
+                  whiteLabel.name ||
+                  whiteLabel.brand_name ||
+                  whiteLabel.label_name ||
+                  "Unknown Label",
 
-                  brand_name:
-                    whiteLabel.brand_name ||
-                    null,
+                brand_name:
+                  whiteLabel.brand_name ||
+                  null,
 
-                  status:
-                    whiteLabel.status ||
-                    "active",
-                }
-              : null,
+                status:
+                  whiteLabel.status ||
+                  "active",
+              }
+            : null,
 
           white_label_name:
             whiteLabel?.name ||
             whiteLabel?.brand_name ||
             whiteLabel?.label_name ||
             "Nexorael",
-
-          /*
-           * Normalized status
-           */
-          normalized_status:
-            normalizeStatus(
-              release?.status
-            ),
         };
       }
     );
 
-    /*
-     * ---------------------------------------------------------
-     * 8. FILTER BY USER
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------
+    // FILTERS
+    // ---------------------------------------------
+
+    const { searchParams } =
+      new URL(request.url);
+
+    const search =
+      searchParams.get("search")?.trim() || "";
+
+    const status =
+      searchParams.get("status")?.trim() || "all";
+
+    const userId =
+      searchParams.get("userId")?.trim() || "";
+
+    const whiteLabelId =
+      searchParams.get("whiteLabelId")?.trim() || "";
+
+    let result = [...normalizedReleases];
 
     if (userId) {
       result = result.filter(
@@ -373,12 +345,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 9. FILTER BY WHITE LABEL
-     * ---------------------------------------------------------
-     */
-
     if (whiteLabelId) {
       result = result.filter(
         (release: any) =>
@@ -388,32 +354,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 10. FILTER BY STATUS
-     * ---------------------------------------------------------
-     */
-
     if (
       status &&
       status !== "all"
     ) {
-      const normalizedFilter =
-        normalizeStatus(status);
+      const normalizedStatus =
+        String(status)
+          .toLowerCase()
+          .replace(/[\s-]+/g, "_");
 
       result = result.filter(
         (release: any) =>
-          normalizeStatus(
-            release?.status
-          ) === normalizedFilter
+          String(
+            release?.status || ""
+          )
+            .toLowerCase()
+            .replace(/[\s-]+/g, "_") ===
+          normalizedStatus
       );
     }
-
-    /*
-     * ---------------------------------------------------------
-     * 11. SEARCH
-     * ---------------------------------------------------------
-     */
 
     if (search) {
       const query =
@@ -423,140 +382,111 @@ export async function GET(request: NextRequest) {
         (release: any) => {
           const searchable = [
             release?.title,
-
             release?.artist_name,
-
             release?.artistName,
-
             release?.type,
-
             release?.upc,
-
             release?.isrc,
-
             release?.status,
-
             release?.label,
-
             release?.label_name,
-
-            release?.labelName,
-
             release?.toolost_release_id,
-
             release?.toolostReleaseId,
-
             release?.user_name,
-
             release?.user_email,
-
             release?.white_label_name,
           ]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
 
-          return searchable.includes(
-            query
-          );
+          return searchable.includes(query);
         }
       );
     }
 
-    /*
-     * ---------------------------------------------------------
-     * 12. RELEASE STATISTICS
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------
+    // STATISTICS
+    // ---------------------------------------------
 
-    const total =
-      result.length;
+    const normalizeStatus = (
+      value: unknown
+    ) =>
+      String(value || "")
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
 
-    const draft =
-      result.filter(
-        (release: any) =>
+    const total = result.length;
+
+    const draft = result.filter(
+      (release: any) =>
+        normalizeStatus(
+          release.status
+        ) === "draft"
+    ).length;
+
+    const pending = result.filter(
+      (release: any) =>
+        [
+          "pending",
+          "pending_review",
+          "under_review",
+          "submitted",
+          "processing",
+        ].includes(
           normalizeStatus(
             release.status
-          ) === "draft"
-      ).length;
+          )
+        )
+    ).length;
 
-    const pending =
-      result.filter(
-        (release: any) => {
-          const current =
-            normalizeStatus(
-              release.status
-            );
+    const approved = result.filter(
+      (release: any) =>
+        normalizeStatus(
+          release.status
+        ) === "approved"
+    ).length;
 
-          return [
-            "pending",
-            "pending_review",
-            "under_review",
-            "submitted",
-            "processing",
-          ].includes(current);
-        }
-      ).length;
-
-    const approved =
-      result.filter(
-        (release: any) =>
+    const live = result.filter(
+      (release: any) =>
+        [
+          "live",
+          "delivered",
+        ].includes(
           normalizeStatus(
             release.status
-          ) === "approved"
-      ).length;
+          )
+        )
+    ).length;
 
-    const live =
-      result.filter(
-        (release: any) => {
-          const current =
-            normalizeStatus(
-              release.status
-            );
+    const rejected = result.filter(
+      (release: any) =>
+        [
+          "rejected",
+          "failed",
+        ].includes(
+          normalizeStatus(
+            release.status
+          )
+        )
+    ).length;
 
-          return [
-            "live",
-            "delivered",
-          ].includes(current);
-        }
-      ).length;
+    const takedown = result.filter(
+      (release: any) =>
+        [
+          "takedown",
+          "taken_down",
+          "takedown_requested",
+        ].includes(
+          normalizeStatus(
+            release.status
+          )
+        )
+    ).length;
 
-    const rejected =
-      result.filter(
-        (release: any) => {
-          const current =
-            normalizeStatus(
-              release.status
-            );
-
-          return [
-            "rejected",
-            "failed",
-          ].includes(current);
-        }
-      ).length;
-
-    const takedown =
-      result.filter(
-        (release: any) => {
-          const current =
-            normalizeStatus(
-              release.status
-            );
-
-          return [
-            "takedown",
-            "taken_down",
-            "takedown_requested",
-          ].includes(current);
-        }
-      ).length;
-
-    /*
-     * ---------------------------------------------------------
-     * 13. RESPONSE
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------
+    // SUCCESS
+    // ---------------------------------------------
 
     return NextResponse.json({
       success: true,
@@ -567,49 +497,35 @@ export async function GET(request: NextRequest) {
 
       statistics: {
         total,
-
         draft,
-
         pending,
-
         approved,
-
         live,
-
         rejected,
-
         takedown,
       },
 
-      users: profiles || [],
+      users: profiles,
 
-      whiteLabels:
-        whiteLabels || [],
-
-      filters: {
-        search,
-        status,
-        userId,
-        whiteLabelId,
-      },
+      whiteLabels,
 
       generatedAt:
         new Date().toISOString(),
     });
   } catch (error) {
     console.error(
-      "Admin releases API error:",
+      "ADMIN RELEASE API ERROR:",
       error
     );
 
     return NextResponse.json(
       {
         success: false,
-
+        step: "admin_releases_api",
         error:
           error instanceof Error
             ? error.message
-            : "Failed to load admin releases",
+            : String(error),
       },
       { status: 500 }
     );
