@@ -134,19 +134,40 @@ export default function AdminReleasesPage() {
         return;
       }
 
-      const allowedRoles = [
-        "master_admin",
-        "white_label_admin",
-      ];
+     const allowedRoles = [
+  "master_admin",
+  "white_label_admin",
+  "admin",
+];
 
-      if (
-        !allowedRoles.includes(profile.role) ||
-        profile.status !== "active"
-      ) {
-        alert("Admin access only.");
-        router.push("/dashboard");
-        return;
-      }
+const userRole = String(
+  profile.role || ""
+).toLowerCase();
+
+const userStatus = String(
+  profile.status || ""
+).toLowerCase();
+
+if (!allowedRoles.includes(userRole)) {
+  alert(
+    `Admin access only. Current role: ${profile.role || "unknown"}`
+  );
+  router.push("/dashboard");
+  return;
+}
+
+if (
+  userStatus &&
+  userStatus !== "active"
+) {
+  alert(
+    `Your account is not active. Current status: ${
+      profile.status || "unknown"
+    }`
+  );
+  router.push("/dashboard");
+  return;
+}
 
       setAdminProfile(profile);
 
