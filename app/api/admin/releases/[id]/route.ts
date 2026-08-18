@@ -259,25 +259,32 @@ export async function PATCH(
        */
 
       if (!toolostResponse.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost submission failed.",
-            tooLostStatus:
-              toolostResponse.status,
-            tooLostResponse:
-              toolostData,
-          },
-          {
-            status:
-              toolostResponse.status >= 400 &&
-              toolostResponse.status < 600
-                ? toolostResponse.status
-                : 502,
-          }
-        );
-      }
+  console.error("========== TOO LOST SUBMIT ERROR ==========");
+  console.error("Status:", toolostResponse.status);
+  console.error(
+    "Response:",
+    JSON.stringify(toolostData, null, 2)
+  );
+  console.error("============================================");
+
+  return NextResponse.json(
+    {
+      success: false,
+
+      error: "Too Lost submission failed.",
+
+      tooLostStatus: toolostResponse.status,
+
+      tooLostResponse: toolostData,
+
+      releaseId:
+        releaseRow.toolost_release_id,
+    },
+    {
+      status: 422,
+    }
+  );
+}
 
       /*
        * Too Lost accepted the submission.
