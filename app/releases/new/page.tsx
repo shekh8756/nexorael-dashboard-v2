@@ -79,6 +79,39 @@ function unwrap(value: any) {
   return value?.data?.data ?? value?.data ?? value;
 }
 
+/**
+ * Too Lost accepts WAV audio for this upload flow.
+ * Keep the browser file untouched for Supabase, but send a safe ASCII
+ * filename + the canonical WAV MIME type to the Too Lost API.
+ */
+function getTooLostAudioFileName(file: File): string {
+  const originalName = String(file.name || "audio.wav");
+
+  if (!/\.wav$/i.test(originalName)) {
+    throw new Error(
+      `Only WAV audio files are supported. "${originalName}" is not a WAV file.`
+    );
+  }
+
+  let safeName = originalName
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[-_.]+|[-_.]+$/g, "");
+
+  if (!safeName) {
+    safeName = "audio.wav";
+  }
+
+  if (!/\.wav$/i.test(safeName)) {
+    safeName = `${safeName}.wav`;
+  }
+
+  return safeName;
+}
+
 export default function NewReleasePage() {
   const router = useRouter();
 
@@ -319,6 +352,9 @@ export default function NewReleasePage() {
       const t = tracks[i];
       if (!t.title) return `Track ${i + 1} title required hai.`;
       if (!t.audio) return `Track ${i + 1} audio upload karo.`;
+      if (!/\.wav$/i.test(t.audio.name)) {
+        return `Track ${i + 1}: sirf WAV audio file upload karo.`;
+      }
       if (!t.auto_isrc && !t.isrc) {
         return `Track ${i + 1} me ISRC daalo ya Auto ISRC tick karo.`;
       }
@@ -598,9 +634,12 @@ export default function NewReleasePage() {
             },
             body: JSON.stringify({
               releaseId: tooLostReleaseId,
-              fileName: track.audio?.name,
-              contentType:
-                track.audio?.type || "audio/wav",
+
+              // Too Lost upload-url validation is strict.
+              // Send a sanitized ASCII WAV filename and canonical MIME type.
+              fileName: getTooLostAudioFileName(track.audio as File),
+              contentType: "audio/wav",
+
               audioUrl,
               track: {
                 title: track.title,
@@ -611,8 +650,8 @@ export default function NewReleasePage() {
                 producer: track.producer,
                 publisher: track.publisher,
                 version: track.version,
-                language: track.language,
-                contentType: track.content_type,
+                language: track.language || language,
+                contentType: track.content_type || "original",
                 explicit: track.explicit,
               },
             }),
@@ -1239,18 +1278,34 @@ export default function NewReleasePage() {
                         )}
                       </select>
 
-                      <label>Audio file *</label>
+                      <label>Audio file * (WAV only)</label>
                       <input
                         type="file"
-                        accept="audio/*"
-                        onChange={(e) =>
+                        accept=".wav,audio/wav"
+                        onChange={(e) => {
+                          const file =
+                            e.target.files?.[0] || null;
+
+                          if (!file) {
+                            updateTrack(index, "audio", null);
+                            return;
+                          }
+
+                          if (!/\.wav$/i.test(file.name)) {
+                            alert(
+                              "Sirf WAV audio file upload karo. Example: song.wav"
+                            );
+                            e.currentTarget.value = "";
+                            updateTrack(index, "audio", null);
+                            return;
+                          }
+
                           updateTrack(
                             index,
                             "audio",
-                            e.target.files?.[0] ||
-                              null
-                          )
-                        }
+                            file
+                          );
+                        }}
                         style={inputStyle}
                         required
                       />
@@ -1713,7 +1768,7 @@ const exitBtn: CSSProperties = {
 const stepsBar: CSSProperties = {
   flex: 1,
   display: "grid",
-  gridTemplateColumns: "repeat(8, 1fr)",
+  gridTemplateColumns: "repeat(9, 1fr)",
   marginLeft: "12px",
 };
 
