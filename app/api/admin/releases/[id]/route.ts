@@ -217,26 +217,223 @@ export async function PATCH(
        * /releases/{releaseId}/submit
        */
 
-      const toolostPath =
-        `/releases/${encodeURIComponent(
-          String(releaseRow.toolost_release_id)
-        )}/submit`;
+      // ============================================
+// TOO LOST: CONFIGURE DELIVERY + SUBMIT
+// ============================================
 
-      console.log(
-        "Submitting release to Too Lost:",
-        toolostPath
+console.log("========== TOO LOST SUBMISSION ==========");
+
+// 1. Get available Too Lost platforms/stores
+const {
+  response: platformsResponse,
+  data: platformsData,
+} = await tooLostApi(
+  accessToken,
+  "lookup/platforms",
+  {
+    method: "GET",
+  }
+);
+
+console.log(
+  "Too Lost platforms status:",
+  platformsResponse.status
+);
+
+console.log(
+  "Too Lost platforms response:",
+  platformsData
+);
+
+if (!platformsResponse.ok) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: "Unable to fetch Too Lost platforms.",
+      tooLostStatus: platformsResponse.status,
+      tooLostResponse: platformsData,
+    },
+    {
+      status: 422,
+    }
+  );
+}
+
+// 2. Extract platforms safely
+const platformRoot =
+  platformsData &&
+  typeof platformsData === "object"
+    ? platformsData
+    : {};
+
+const availablePlatforms =
+  Array.isArray(platformRoot)
+    ? platformRoot
+    : Array.isArray(
+        (platformRoot as any).data
+      )
+    ? (platformRoot as any).data
+    : Array.isArray(
+        (platformRoot as any).platforms
+      )
+    ? (platformRoot as any).platforms
+    : [];
+
+// Log platforms so we can see the exact Too Lost IDs
+console.log(
+  "Available Too Lost platforms:",
+  JSON.stringify(
+    availablePlatforms,
+    null,
+    2
+  )
+);
+
+// 3. Select common DSPs automatically
+const wantedStores = [
+  "spotify",
+  "apple",
+  "apple music",
+  "youtube",
+  "youtube music",
+  "amazon",
+  "amazon music",
+  "deezer",
+  "tidal",
+  "tiktok",
+  "facebook",
+  "instagram",
+];
+
+const selectedPlatforms =
+  availablePlatforms.filter(
+    (platform: any) => {
+      const name = String(
+        platform?.name ??
+          platform?.title ??
+          platform?.label ??
+          platform?.slug ??
+          ""
+      ).toLowerCase();
+
+      return wantedStores.some(
+        (store) =>
+          name === store ||
+          name.includes(store)
       );
+    }
+  );
 
-      const {
+// 4. Get IDs from Too Lost response
+const selectedPlatformIds =
+  selectedPlatforms
+    .map(
+      (platform: any) =>
+        platform?.id ??
+        platform?.platform_id ??
+        platform?.store_id
+    )
+    .filter(
+      (id: any) =>
+        id !== undefined &&
+        id !== null
+    );
+
+console.log(
+  "Selected Too Lost platform IDs:",
+  selectedPlatformIds
+);
+
+// IMPORTANT:
+// Don't submit if we couldn't identify stores.
+if (
+  selectedPlatformIds.length === 0
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "No Too Lost stores/platforms could be identified.",
+      availablePlatforms,
+      releaseId:
+        releaseRow.toolost_release_id,
+    },
+    {
+      status: 422,
+    }
+  );
+}
+
+// 5. Configure release delivery
+//
+// Too Lost exposes delivery as a separate
+// release endpoint before submission.
+const deliveryPath =
+  `releases/${releaseRow.toolost_release_id}/delivery`;
+
+const {
+  response: deliveryResponse,
+  data: deliveryData,
+} = await tooLostApi(
+  accessToken,
+  deliveryPath,
+  {
+    method: "PATCH",
+    headers: {
+      "Content-Type":
+        "application/json",
+    },
+    body: JSON.stringify({
+      stores: selectedPlatformIds,
+    }),
+  }
+);
+
+console.log(
+  "Too Lost delivery status:",
+  deliveryResponse.status
+);
+
+console.log(
+  "Too Lost delivery response:",
+  deliveryData
+);
+
+// 6. Stop if delivery configuration failed
+if (!deliveryResponse.ok) {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "Too Lost delivery configuration failed.",
+      tooLostStatus:
+        deliveryResponse.status,
+      tooLostResponse:
+        deliveryData,
+      releaseId:
+        releaseRow.toolost_release_id,
+    },
+    {
+      status: 422,
+    }
+  );
+}
+
+// 7. Submit release
+const submitPath =
+  `releases/${releaseRow.toolost_release_id}/submit`;
+
+const {
   response: toolostResponse,
   data: toolostData,
 } = await tooLostApi(
   accessToken,
-  toolostPath,
+  submitPath,
   {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type":
+        "application/json",
     },
     body: JSON.stringify({
       acceptTerms: true,
@@ -256,33 +453,48 @@ console.log(
   toolostData
 );
 
-/*
- * If Too Lost rejects the request,
- * DO NOT mark our release approved.
- */
-
+// 8. NEVER approve locally if Too Lost rejected
 if (!toolostResponse.ok) {
-  console.error("========== TOO LOST SUBMIT ERROR ==========");
-  console.error("Status:", toolostResponse.status);
+  console.error(
+    "========== TOO LOST SUBMIT ERROR =========="
+  );
+
+  console.error(
+    "Status:",
+    toolostResponse.status
+  );
+
   console.error(
     "Response:",
-    JSON.stringify(toolostData, null, 2)
+    JSON.stringify(
+      toolostData,
+      null,
+      2
+    )
   );
-  console.error("============================================");
+
+  console.error(
+    "============================================"
+  );
 
   return NextResponse.json(
     {
       success: false,
-      error: "Too Lost submission failed.",
-      tooLostStatus: toolostResponse.status,
-      tooLostResponse: toolostData,
-      releaseId: releaseRow.toolost_release_id,
+      error:
+        "Too Lost submission failed.",
+      tooLostStatus:
+        toolostResponse.status,
+      tooLostResponse:
+        toolostData,
+      releaseId:
+        releaseRow.toolost_release_id,
     },
     {
       status: 422,
     }
   );
 }
+
 
       /*
        * Too Lost accepted the submission.
