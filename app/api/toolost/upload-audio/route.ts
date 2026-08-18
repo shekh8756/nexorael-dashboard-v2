@@ -12,7 +12,9 @@ function findUploadData(value: any): {
   method?: string;
   headers?: Record<string, string>;
 } {
-  if (!value || typeof value !== "object") return {};
+  if (!value || typeof value !== "object") {
+    return {};
+  }
 
   const uploadUrl =
     value.uploadUrl ??
@@ -30,7 +32,10 @@ function findUploadData(value: any): {
     return {
       uploadUrl,
       fileKey,
-      method: value.method ?? value.httpMethod ?? value.http_method,
+      method:
+        value.method ??
+        value.httpMethod ??
+        value.http_method,
       headers:
         value.headers ??
         value.uploadHeaders ??
@@ -38,10 +43,19 @@ function findUploadData(value: any): {
     };
   }
 
-  for (const key of ["data", "result", "upload", "file", "payload"]) {
+  for (const key of [
+    "data",
+    "result",
+    "upload",
+    "file",
+    "payload",
+  ]) {
     if (value[key]) {
       const found = findUploadData(value[key]);
-      if (found.uploadUrl || found.fileKey) return found;
+
+      if (found.uploadUrl || found.fileKey) {
+        return found;
+      }
     }
   }
 
@@ -52,6 +66,34 @@ function unwrap(value: any) {
   return value?.data?.data ?? value?.data ?? value;
 }
 
+function normalizeAudioFileName(fileName: string): string {
+  let name = String(fileName || "").trim();
+
+  // Remove path information if any
+  name = name.split(/[\\/]/).pop() || "audio";
+
+  // Replace spaces and unsupported characters
+  name = name.replace(/[^\w.-]+/g, "_");
+
+  // Remove repeated dots
+  name = name.replace(/\.{2,}/g, ".");
+
+  // Remove leading/trailing dots
+  name = name.replace(/^\.+/, "").replace(/\.+$/, "");
+
+  // Make sure filename is not empty
+  if (!name) {
+    name = "audio";
+  }
+
+  // Too Lost upload is for WAV in our dashboard
+  if (!/\.wav$/i.test(name)) {
+    name = `${name}.wav`;
+  }
+
+  return name;
+}
+
 async function updateTrackMetadata(
   accessToken: string,
   releaseId: string,
@@ -59,65 +101,79 @@ async function updateTrackMetadata(
   trackId?: string | number,
   audioFileKey?: string
 ) {
-  const artists = track.artist
-    ? [
-        {
-          name: track.artist,
-          role: ["primary"],
-        },
-      ]
-    : [];
+  const artists: any[] = [];
 
-  const writers = [];
+  const writers: any[] = [];
 
-  if (track.lyricist) {
+  /*
+   * ARTIST
+   */
+  if (track?.artist) {
+    artists.push({
+      name: String(track.artist).trim(),
+      role: ["primary"],
+    });
+  }
+
+  /*
+   * WRITERS
+   */
+  if (track?.lyricist) {
     writers.push({
-      name: track.lyricist,
+      name: String(track.lyricist).trim(),
       role: ["lyricist"],
     });
   }
 
-  if (track.composer) {
+  if (track?.composer) {
     writers.push({
-      name: track.composer,
+      name: String(track.composer).trim(),
       role: ["composer"],
     });
   }
 
-  if (track.writer) {
+  if (track?.writer) {
     writers.push({
-      name: track.writer,
+      name: String(track.writer).trim(),
       role: ["writer"],
     });
   }
 
-  // Too Lost requires at least one writer.
-  // If composer/lyricist/writer is not separately supplied,
-  // use the artist as a fallback writer so the API request is valid.
-  if (writers.length === 0 && track.artist) {
+  /*
+   * Too Lost requires at least one writer.
+   *
+   * If composer / lyricist / writer is missing,
+   * use the primary artist as fallback.
+   */
+  if (writers.length === 0 && track?.artist) {
     writers.push({
-      name: track.artist,
+      name: String(track.artist).trim(),
       role: ["writer"],
     });
   }
 
+  /*
+   * Too Lost requires these track fields:
+   * - audioFileKey
+   * - artists
+   * - writers
+   */
   const payload: Record<string, unknown> = {
-    title: track.title,
-    language: track.language || undefined,
-    content_type: track.contentType || "ai_music",
-    explicit: Boolean(track.explicit),
+    title: track?.title || "Untitled",
+    language: track?.language || "Hindi",
+    content_type: track?.contentType || "ai_music",
+    explicit: Boolean(track?.explicit),
 
-    // REQUIRED BY TOO LOST
-    audioFileKey: audioFileKey || undefined,
+    audioFileKey: audioFileKey,
     artists,
     writers,
   };
 
-  if (track.isrc) {
+  if (track?.isrc) {
     payload.isrc = track.isrc;
   }
 
-  if (track.version) {
+  if (track?.version) {
     payload.version = track.version;
   }
 
@@ -143,15 +199,34 @@ async function updateTrackMetadata(
 
 export async function POST(request: NextRequest) {
   try {
+    /*
+     * ---------------------------------------------------------
+     * 1. GET TOO LOST ACCESS TOKEN
+     * ---------------------------------------------------------
+     */
+
     const cookieStore = await cookies();
-    const accessToken = cookieStore.get("toolost_access_token")?.value;
+
+    const accessToken =
+      cookieStore.get("toolost_access_token")?.value;
 
     if (!accessToken) {
       return NextResponse.json(
-        { success: false, error: "Too Lost is not connected" },
-        { status: 401 }
+        {
+          success: false,
+          error: "Too Lost is not connected",
+        },
+        {
+          status: 401,
+        }
       );
     }
+
+    /*
+     * ---------------------------------------------------------
+     * 2. READ REQUEST BODY
+     * ---------------------------------------------------------
+     */
 
     const body = await request.json();
 
@@ -163,225 +238,476 @@ export async function POST(request: NextRequest) {
       track,
     } = body;
 
+    /*
+     * ---------------------------------------------------------
+     * 3. VALIDATE INPUT
+     * ---------------------------------------------------------
+     */
+
     if (!releaseId || !fileName || !audioUrl) {
       return NextResponse.json(
         {
           success: false,
-          error: "releaseId, fileName and audioUrl are required.",
+          error:
+            "releaseId, fileName and audioUrl are required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
+
+    /*
+     * ---------------------------------------------------------
+     * 4. NORMALIZE FILE NAME
+     * ---------------------------------------------------------
+     */
+
+    const safeFileName =
+      normalizeAudioFileName(String(fileName));
+
+    /*
+     * We are uploading WAV files from the dashboard.
+     *
+     * Do not trust the browser's MIME type because the
+     * browser may send an unsupported MIME value.
+     */
+    const normalizedContentType = "audio/wav";
+
+    console.log("Too Lost upload request:", {
+      releaseId,
+      originalFileName: fileName,
+      safeFileName,
+      originalContentType: contentType,
+      normalizedContentType,
+    });
+
+    /*
+     * ---------------------------------------------------------
+     * 5. ASK TOO LOST FOR SIGNED UPLOAD URL
+     * ---------------------------------------------------------
+     */
 
     const uploadUrlResult = await tooLostApi(
       accessToken,
       `/releases/${releaseId}/tracks/upload-url`,
       {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
+
         body: JSON.stringify({
           kind: "audio",
-          fileName,
-          contentType: contentType || "audio/wav",
+          fileName: safeFileName,
+          contentType: normalizedContentType,
         }),
       }
     );
 
+    /*
+     * ---------------------------------------------------------
+     * 6. CHECK UPLOAD URL RESPONSE
+     * ---------------------------------------------------------
+     */
+
     if (!uploadUrlResult.response.ok) {
+      console.error(
+        "Too Lost upload-url error:",
+        uploadUrlResult.data
+      );
+
       return NextResponse.json(
         {
           success: false,
           step: "create_upload_url",
           status: uploadUrlResult.response.status,
+          fileName: safeFileName,
+          contentType: normalizedContentType,
           tooLostResponse: uploadUrlResult.data,
         },
-        { status: uploadUrlResult.response.status }
+        {
+          status: uploadUrlResult.response.status,
+        }
       );
     }
 
-    const upload = findUploadData(uploadUrlResult.data);
+    /*
+     * ---------------------------------------------------------
+     * 7. EXTRACT SIGNED UPLOAD DATA
+     * ---------------------------------------------------------
+     */
+
+    const upload = findUploadData(
+      uploadUrlResult.data
+    );
 
     if (!upload.uploadUrl || !upload.fileKey) {
+      console.error(
+        "Too Lost returned invalid upload data:",
+        uploadUrlResult.data
+      );
+
       return NextResponse.json(
         {
           success: false,
           step: "create_upload_url",
-          error: "Too Lost did not return a usable upload URL/file key.",
+          error:
+            "Too Lost did not return a usable upload URL/file key.",
           tooLostResponse: uploadUrlResult.data,
         },
-        { status: 502 }
+        {
+          status: 502,
+        }
       );
     }
 
-    const sourceResponse = await fetch(audioUrl, { cache: "no-store" });
+    /*
+     * ---------------------------------------------------------
+     * 8. DOWNLOAD AUDIO FROM SUPABASE
+     * ---------------------------------------------------------
+     */
+
+    const sourceResponse = await fetch(
+      audioUrl,
+      {
+        cache: "no-store",
+      }
+    );
 
     if (!sourceResponse.ok) {
       return NextResponse.json(
         {
           success: false,
           step: "download_audio",
-          error: `Could not download audio from Supabase (${sourceResponse.status}).`,
+          error:
+            `Could not download audio from Supabase (${sourceResponse.status}).`,
         },
-        { status: 502 }
+        {
+          status: 502,
+        }
       );
     }
 
-    const audioBuffer = await sourceResponse.arrayBuffer();
+    const audioBuffer =
+      await sourceResponse.arrayBuffer();
 
-    const uploadHeaders = new Headers(upload.headers || {});
+    if (!audioBuffer.byteLength) {
+      return NextResponse.json(
+        {
+          success: false,
+          step: "download_audio",
+          error: "Downloaded audio file is empty.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 9. UPLOAD BINARY AUDIO TO TOO LOST
+     * ---------------------------------------------------------
+     */
+
+    const uploadHeaders =
+      new Headers(upload.headers || {});
+
     if (!uploadHeaders.has("Content-Type")) {
       uploadHeaders.set(
         "Content-Type",
-        contentType || "audio/wav"
+        normalizedContentType
       );
     }
 
-    const binaryUpload = await fetch(upload.uploadUrl, {
-      method: upload.method || "PUT",
-      headers: uploadHeaders,
-      body: audioBuffer,
-    });
+    const binaryUpload = await fetch(
+      upload.uploadUrl,
+      {
+        method: upload.method || "PUT",
+        headers: uploadHeaders,
+        body: audioBuffer,
+      }
+    );
 
-    const uploadResponseText = await binaryUpload.text();
+    const uploadResponseText =
+      await binaryUpload.text();
 
     if (!binaryUpload.ok) {
+      console.error(
+        "Too Lost binary upload failed:",
+        {
+          status: binaryUpload.status,
+          response: uploadResponseText,
+        }
+      );
+
       return NextResponse.json(
         {
           success: false,
           step: "too_lost_binary_upload",
-          error: `Too Lost audio upload failed (${binaryUpload.status}).`,
-          details: uploadResponseText.slice(0, 2000),
+          error:
+            `Too Lost audio upload failed (${binaryUpload.status}).`,
+          details:
+            uploadResponseText.slice(0, 2000),
           fileKey: upload.fileKey,
         },
-        { status: 502 }
+        {
+          status: 502,
+        }
       );
     }
 
-    // Uploading the file is not enough. Attach the returned fileKey to the
-    // actual Too Lost track and then send the track metadata.
+    /*
+     * ---------------------------------------------------------
+     * 10. CHECK EXISTING TRACKS
+     * ---------------------------------------------------------
+     */
+
     const tracksResult = await tooLostApi(
       accessToken,
       `/releases/${releaseId}/tracks`,
-      { method: "GET" }
+      {
+        method: "GET",
+      }
     );
 
-    let tracks = unwrap(tracksResult.data);
-    if (!Array.isArray(tracks)) tracks = [];
+    let tracks = unwrap(
+      tracksResult.data
+    );
 
-    let currentTrack = tracks[tracks.length - 1];
-    let trackId = currentTrack?.id;
+    if (!Array.isArray(tracks)) {
+      tracks = [];
+    }
+
+    let currentTrack =
+      tracks.length > 0
+        ? tracks[tracks.length - 1]
+        : undefined;
+
+    let trackId =
+      currentTrack?.id;
+
+    /*
+     * ---------------------------------------------------------
+     * 11. CREATE / UPDATE TRACK METADATA
+     * ---------------------------------------------------------
+     */
 
     if (!trackId && track?.title) {
-      const metadataResult = await updateTrackMetadata(
-  accessToken,
-  String(releaseId),
-  track,
-  undefined,
-  upload.fileKey
-);
+      const metadataResult =
+        await updateTrackMetadata(
+          accessToken,
+          String(releaseId),
+          track,
+          undefined,
+          upload.fileKey
+        );
 
       if (!metadataResult.response.ok) {
+        console.error(
+          "Too Lost rejected track metadata:",
+          metadataResult.data
+        );
+
         return NextResponse.json(
           {
             success: false,
             step: "track_metadata",
-            status: metadataResult.response.status,
-            error: "Too Lost rejected track metadata.",
-            tooLostResponse: metadataResult.data,
-            fileKey: upload.fileKey,
+            status:
+              metadataResult.response.status,
+            error:
+              "Too Lost rejected track metadata.",
+            tooLostResponse:
+              metadataResult.data,
+            fileKey:
+              upload.fileKey,
           },
-          { status: metadataResult.response.status }
+          {
+            status:
+              metadataResult.response.status,
+          }
         );
       }
 
-      const refreshed = await tooLostApi(
-        accessToken,
-        `/releases/${releaseId}/tracks`,
-        { method: "GET" }
-      );
+      /*
+       * Fetch tracks again so we can obtain the newly
+       * created track ID.
+       */
 
-      const refreshedTracks = unwrap(refreshed.data);
-      if (Array.isArray(refreshedTracks) && refreshedTracks.length) {
-        currentTrack = refreshedTracks[refreshedTracks.length - 1];
-        trackId = currentTrack?.id;
+      const refreshed =
+        await tooLostApi(
+          accessToken,
+          `/releases/${releaseId}/tracks`,
+          {
+            method: "GET",
+          }
+        );
+
+      const refreshedTracks =
+        unwrap(refreshed.data);
+
+      if (
+        Array.isArray(refreshedTracks) &&
+        refreshedTracks.length
+      ) {
+        currentTrack =
+          refreshedTracks[
+            refreshedTracks.length - 1
+          ];
+
+        trackId =
+          currentTrack?.id;
       }
     } else if (trackId && track?.title) {
-      const metadataResult = await updateTrackMetadata(
-  accessToken,
-  String(releaseId),
-  track,
-  trackId,
-  upload.fileKey
-);
+      const metadataResult =
+        await updateTrackMetadata(
+          accessToken,
+          String(releaseId),
+          track,
+          trackId,
+          upload.fileKey
+        );
 
       if (!metadataResult.response.ok) {
+        console.error(
+          "Too Lost rejected track metadata:",
+          metadataResult.data
+        );
+
         return NextResponse.json(
           {
             success: false,
             step: "track_metadata",
-            status: metadataResult.response.status,
-            error: "Too Lost rejected track metadata.",
-            tooLostResponse: metadataResult.data,
-            fileKey: upload.fileKey,
+            status:
+              metadataResult.response.status,
+            error:
+              "Too Lost rejected track metadata.",
+            tooLostResponse:
+              metadataResult.data,
+            fileKey:
+              upload.fileKey,
+            trackId,
           },
-          { status: metadataResult.response.status }
+          {
+            status:
+              metadataResult.response.status,
+          }
         );
       }
     }
+
+    /*
+     * ---------------------------------------------------------
+     * 12. MAKE SURE TRACK ID EXISTS
+     * ---------------------------------------------------------
+     */
 
     if (!trackId) {
       return NextResponse.json(
         {
           success: false,
           step: "track",
-          error: "Too Lost did not expose a track ID after track creation.",
-          fileKey: upload.fileKey,
+          error:
+            "Too Lost did not expose a track ID after track creation.",
+          fileKey:
+            upload.fileKey,
         },
-        { status: 502 }
+        {
+          status: 502,
+        }
       );
     }
 
-    const attachResult = await tooLostApi(
-      accessToken,
-      `/releases/${releaseId}/tracks/${trackId}/file`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind: "audio",
-          fileKey: upload.fileKey,
-        }),
-      }
-    );
+    /*
+     * ---------------------------------------------------------
+     * 13. ATTACH AUDIO FILE TO TRACK
+     * ---------------------------------------------------------
+     */
+
+    const attachResult =
+      await tooLostApi(
+        accessToken,
+        `/releases/${releaseId}/tracks/${trackId}/file`,
+        {
+          method: "PATCH",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+            Accept:
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            kind: "audio",
+            fileKey: upload.fileKey,
+          }),
+        }
+      );
 
     if (!attachResult.response.ok) {
+      console.error(
+        "Too Lost rejected audio attachment:",
+        attachResult.data
+      );
+
       return NextResponse.json(
         {
           success: false,
           step: "attach_file",
-          status: attachResult.response.status,
-          error: "Too Lost rejected the uploaded audio attachment.",
-          tooLostResponse: attachResult.data,
-          fileKey: upload.fileKey,
+          status:
+            attachResult.response.status,
+          error:
+            "Too Lost rejected the uploaded audio attachment.",
+          tooLostResponse:
+            attachResult.data,
+          fileKey:
+            upload.fileKey,
           trackId,
         },
-        { status: attachResult.response.status }
+        {
+          status:
+            attachResult.response.status,
+        }
       );
     }
 
+    /*
+     * ---------------------------------------------------------
+     * 14. SUCCESS
+     * ---------------------------------------------------------
+     */
+
     return NextResponse.json({
       success: true,
+
       releaseId,
+
       trackId,
-      fileKey: upload.fileKey,
-      sizeBytes: audioBuffer.byteLength,
-      data: attachResult.data,
+
+      fileKey:
+        upload.fileKey,
+
+      fileName:
+        safeFileName,
+
+      contentType:
+        normalizedContentType,
+
+      sizeBytes:
+        audioBuffer.byteLength,
+
+      data:
+        attachResult.data,
     });
   } catch (error) {
-    console.error("Too Lost server upload error:", error);
+    console.error(
+      "Too Lost server upload error:",
+      error
+    );
 
     return NextResponse.json(
       {
@@ -391,7 +717,9 @@ export async function POST(request: NextRequest) {
             ? error.message
             : "Server upload failed.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
