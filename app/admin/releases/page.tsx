@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../../lib/supabase";
 
 type Release = {
   id: string;
@@ -10,17 +10,38 @@ type Release = {
   artist_name?: string | null;
   label_name?: string | null;
   status?: string | null;
-  admin_note?: string | null;
+  type?: string | null;
+  release_type?: string | null;
+  toolost_release_id?: string | number | null;
+  upc?: string | null;
+  artwork_url?: string | null;
+  cover_url?: string | null;
   created_at?: string | null;
   user_id?: string | null;
+  admin_note?: string | null;
   white_label_id?: string | null;
-  toolost_release_id?: string | number | null;
 
-  uploaded_by_name?: string;
-  uploaded_by_email?: string;
-  white_label_name?: string;
+  uploaded_by_name?: string | null;
+  uploaded_by_email?: string | null;
+  white_label_name?: string | null;
+};
 
-  [key: string]: any;
+type Action =
+  | "approve"
+  | "reject"
+  | "draft"
+  | "takedown"
+  | "submit";
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  pending: "Pending Review",
+  under_review: "Under Review",
+  approved: "Approved",
+  rejected: "Rejected",
+  live: "Live",
+  takedown: "Takedown",
+  delivered: "Delivered",
 };
 
 export default function AdminReleasesPage() {
@@ -28,7 +49,18 @@ export default function AdminReleasesPage() {
 
   const [releases, setReleases] = useState<Release[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const [selectedRelease, setSelectedRelease] =
+    useState<Release | null>(null);
+
+  const [action, setAction] = useState<Action | null>(null);
+  const [note, setNote] = useState("");
+  const [processing, setProcessing] = useState(false);
+
   const [adminProfile, setAdminProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -37,32 +69,21 @@ export default function AdminReleasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /*
-   * =========================================================
-   * ADMIN AUTH
-   * =========================================================
-   */
-
   async function checkAdmin() {
     try {
-      setLoading(true);
-
-      const { data: userData } =
+      const { data: userData, error: userError } =
         await supabase.auth.getUser();
 
-      if (!userData.user) {
+      if (userError || !userData.user) {
         router.push("/login");
         return;
       }
 
-      const { data: profile, error } =
-        await supabase
-          .from("profiles")
-          .select(
-            "role,status,white_label_id"
-          )
-          .eq("id", userData.user.id)
-          .single();
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("role,status,white_label_id")
+        .eq("id", userData.user.id)
+        .single();
 
       if (error || !profile) {
         router.push("/dashboard");
@@ -87,56 +108,32 @@ export default function AdminReleasesPage() {
 
       await loadReleases(profile);
     } catch (error) {
-      console.error(
-        "Admin authentication error:",
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to authenticate admin."
-      );
-
+      console.error(error);
+      alert("Unable to verify admin access.");
       setLoading(false);
     }
   }
 
-  /*
-   * =========================================================
-   * LOAD RELEASES
-   * =========================================================
-   */
-
-  async function loadReleases(
-    profileParam = adminProfile
-  ) {
+  async function loadReleases(profileParam = adminProfile) {
     try {
-      setLoading(true);
+      setRefreshing(true);
 
-      let releaseQuery = supabase
+      let query = supabase
         .from("releases")
         .select("*")
         .order("created_at", {
           ascending: false,
         });
 
-      /*
-       * White label admin only sees
-       * their own label releases.
-       */
-
-      if (
-        profileParam?.role ===
-        "white_label_admin"
-      ) {
+      if (profileParam?.role === "white_label_admin") {
         if (!profileParam.white_label_id) {
           setReleases([]);
           setLoading(false);
+          setRefreshing(false);
           return;
         }
 
-        releaseQuery = releaseQuery.eq(
+        query = query.eq(
           "white_label_id",
           profileParam.white_label_id
         );
@@ -145,181 +142,164 @@ export default function AdminReleasesPage() {
       const {
         data: releaseData,
         error: releaseError,
-      } = await releaseQuery;
+      } = await query;
 
       if (releaseError) {
-        throw new Error(
-          releaseError.message
-        );
+        console.error(releaseError);
+        alert(releaseError.message);
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
 
-      /*
-       * Load profiles
-       */
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select(
+          "id,full_name,email,role,white_label_id"
+        );
 
-      const { data: profilesData } =
-        await supabase
-          .from("profiles")
-          .select(
-            "id, full_name, email, role, white_label_id"
+      const { data: whiteLabelsData } = await supabase
+        .from("white_labels")
+        .select(
+          "id,name,brand_name,domain"
+        );
+
+      const merged = (releaseData || []).map(
+        (release: any) => {
+          const profile = profilesData?.find(
+            (p) => p.id === release.user_id
           );
 
-      /*
-       * Load white labels
-       */
+          const whiteLabel =
+            whiteLabelsData?.find(
+              (wl) =>
+                wl.id === release.white_label_id
+            );
 
-      const { data: whiteLabelsData } =
-        await supabase
-          .from("white_labels")
-          .select(
-            "id, name, brand_name, domain"
-          );
+          return {
+            ...release,
 
-      /*
-       * Merge information
-       */
+            uploaded_by_name:
+              profile?.full_name || "-",
 
-      const merged: Release[] = (
-        releaseData || []
-      ).map((release) => {
-        const profile =
-          profilesData?.find(
-            (p) =>
-              p.id === release.user_id
-          );
+            uploaded_by_email:
+              profile?.email || "-",
 
-        const whiteLabel =
-          whiteLabelsData?.find(
-            (wl) =>
-              wl.id ===
-              release.white_label_id
-          );
-
-        return {
-          ...release,
-
-          uploaded_by_name:
-            profile?.full_name || "-",
-
-          uploaded_by_email:
-            profile?.email || "-",
-
-          white_label_name:
-            whiteLabel?.name ||
-            whiteLabel?.brand_name ||
-            "Nexorael Direct",
-        };
-      });
+            white_label_name:
+              whiteLabel?.name ||
+              whiteLabel?.brand_name ||
+              "Nexorael Direct",
+          };
+        }
+      );
 
       setReleases(merged);
     } catch (error) {
-      console.error(
-        "Load releases error:",
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to load releases."
-      );
+      console.error(error);
+      alert("Failed to load releases.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
-  /*
-   * =========================================================
-   * ADMIN ACTION API
-   * =========================================================
-   */
+  const filteredReleases = useMemo(() => {
+    const q = search.trim().toLowerCase();
 
-  async function performReleaseAction(
+    return releases.filter((release) => {
+      const matchesSearch =
+        !q ||
+        String(release.title || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(release.artist_name || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(release.label_name || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(release.upc || "")
+          .toLowerCase()
+          .includes(q) ||
+        String(
+          release.toolost_release_id || ""
+        )
+          .toLowerCase()
+          .includes(q);
+
+      const status =
+        String(release.status || "")
+          .toLowerCase();
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [releases, search, statusFilter]);
+
+  const stats = useMemo(() => {
+    const count = (status: string) =>
+      releases.filter(
+        (r) =>
+          String(r.status || "").toLowerCase() ===
+          status
+      ).length;
+
+    return {
+      total: releases.length,
+      draft: count("draft"),
+      pending:
+        count("pending") +
+        count("under_review"),
+      approved: count("approved"),
+      live: count("live"),
+      rejected: count("rejected"),
+      takedown: count("takedown"),
+    };
+  }, [releases]);
+
+  function openAction(
     release: Release,
-    action:
-      | "approve"
-      | "reject"
-      | "draft"
-      | "takedown"
-      | "submit"
+    selectedAction: Action
   ) {
-    if (actionLoading) return;
+    setSelectedRelease(release);
+    setAction(selectedAction);
+    setNote("");
+  }
 
-    /*
-     * Confirmation
-     */
+  function closeAction() {
+    if (processing) return;
 
-    let note = "";
+    setSelectedRelease(null);
+    setAction(null);
+    setNote("");
+  }
 
-    if (
-      action === "reject" ||
-      action === "takedown"
-    ) {
-      note =
-        window.prompt(
-          action === "reject"
-            ? "Enter rejection reason:"
-            : "Enter takedown reason:"
-        ) || "";
-
-      note = note.trim();
-
-      if (!note) {
-        alert(
-          action === "reject"
-            ? "Rejection reason is required."
-            : "Takedown reason is required."
-        );
-
-        return;
-      }
-    } else {
-      const confirmed =
-        window.confirm(
-          action === "submit"
-            ? `Submit "${release.title}" to Too Lost?`
-            : `Are you sure you want to ${action} "${release.title}"?`
-        );
-
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    /*
-     * Submit button protection
-     */
-
-    if (
-      action === "submit" &&
-      String(release.status || "").toLowerCase() !==
-        "draft"
-    ) {
-      alert(
-        "Only draft releases can be submitted."
-      );
-
+  async function executeAction() {
+    if (!selectedRelease || !action) {
       return;
     }
 
     if (
-      action === "submit" &&
-      !release.toolost_release_id
+      (action === "reject" ||
+        action === "takedown") &&
+      !note.trim()
     ) {
       alert(
-        "This release does not have a Too Lost release ID."
+        action === "reject"
+          ? "Please enter a rejection reason."
+          : "Please enter a takedown reason."
       );
-
       return;
     }
 
     try {
-      setActionLoading(
-        `${release.id}-${action}`
-      );
+      setProcessing(true);
 
       const response = await fetch(
-        `/api/admin/releases/${release.id}`,
+        `/api/admin/releases/${selectedRelease.id}`,
         {
           method: "PATCH",
           headers: {
@@ -328,1275 +308,1521 @@ export default function AdminReleasesPage() {
           },
           body: JSON.stringify({
             action,
-            note,
+            note: note.trim(),
           }),
         }
       );
 
-      const data =
-        await response.json();
+      const result = await response.json();
 
-      if (
-        !response.ok ||
-        !data.success
-      ) {
+      if (!response.ok || !result.success) {
         throw new Error(
-          data.error ||
-            `Failed to ${action} release.`
+          result.error ||
+            "Release action failed."
         );
       }
 
-      /*
-       * Notify user
-       */
-
-      if (release.user_id) {
-        const status =
-          data.newStatus ||
-          action;
-
-        await supabase
-          .from("notifications")
-          .insert({
-            user_id:
-              release.user_id,
-
-            title:
-              action === "submit"
-                ? "Release Submitted"
-                : `Release ${status}`,
-
-            message:
-              action === "submit"
-                ? `Your release "${release.title}" has been submitted to Too Lost for review.`
-                : `Your release "${release.title}" status has been updated to ${status}.`,
-
-            type: String(status),
-
-            is_read: false,
-          });
-      }
-
       alert(
-        data.message ||
+        result.message ||
           `Release ${action} completed successfully.`
       );
 
-      await loadReleases(
-        adminProfile
-      );
+      closeAction();
+
+      await loadReleases(adminProfile);
     } catch (error) {
-      console.error(
-        `Release ${action} error:`,
-        error
-      );
+      console.error(error);
 
       alert(
         error instanceof Error
           ? error.message
-          : `Failed to ${action} release.`
+          : "Something went wrong."
       );
     } finally {
-      setActionLoading(null);
+      setProcessing(false);
     }
   }
 
-  /*
-   * =========================================================
-   * DIRECT STATUS UPDATE
-   *
-   * Used for internal workflow statuses
-   * such as Review / Delivered / Live.
-   * =========================================================
-   */
-
-  async function updateInternalStatus(
-    release: Release,
-    status: string
-  ) {
-    if (actionLoading) return;
-
-    const confirmed =
-      window.confirm(
-        `Change "${release.title}" to ${status}?`
-      );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setActionLoading(
-        `${release.id}-${status}`
-      );
-
-      const note =
-        window.prompt(
-          "Admin note optional:"
-        ) || "";
-
-      const { error } =
-        await supabase
-          .from("releases")
-          .update({
-            status,
-            admin_note: note,
-          })
-          .eq("id", release.id);
-
-      if (error) {
-        throw new Error(
-          error.message
-        );
-      }
-
-      /*
-       * Notification
-       */
-
-      if (release.user_id) {
-        await supabase
-          .from("notifications")
-          .insert({
-            user_id:
-              release.user_id,
-
-            title:
-              `Release ${status}`,
-
-            message:
-              `Your release "${release.title}" status has been updated to ${status}.`,
-
-            type: status,
-
-            is_read: false,
-          });
-      }
-
-      alert(
-        "Status updated successfully."
-      );
-
-      await loadReleases(
-        adminProfile
-      );
-    } catch (error) {
-      console.error(
-        "Status update error:",
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to update status."
-      );
-    } finally {
-      setActionLoading(null);
-    }
+  async function submitRelease(release: Release) {
+    openAction(release, "submit");
   }
 
-  /*
-   * =========================================================
-   * DSP DELIVERY
-   * =========================================================
-   */
+  function getStatusClass(status?: string | null) {
+    const value = String(status || "")
+      .toLowerCase();
 
-  async function addDspDelivery(
-    releaseId: string
-  ) {
-    const dspName = window.prompt(
-      "DSP name, example: Spotify, Apple Music, YouTube Music"
-    );
-
-    if (!dspName) return;
-
-    const dspStatus =
-      window.prompt(
-        "Status: pending, delivered, processing, live",
-        "delivered"
-      ) || "delivered";
-
-    const liveLink =
-      window.prompt(
-        "Live link optional, agar live nahi hai to blank chhod do"
-      ) || "";
-
-    try {
-      setActionLoading(
-        `${releaseId}-dsp`
-      );
-
-      const { error } =
-        await supabase
-          .from("dsp_deliveries")
-          .insert({
-            release_id:
-              releaseId,
-
-            dsp_name:
-              dspName,
-
-            status:
-              dspStatus,
-
-            live_link:
-              liveLink,
-          });
-
-      if (error) {
-        throw new Error(
-          error.message
-        );
-      }
-
-      alert(
-        "DSP delivery added successfully."
-      );
-    } catch (error) {
-      console.error(
-        "DSP delivery error:",
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to add DSP delivery."
-      );
-    } finally {
-      setActionLoading(null);
+    if (value === "draft") {
+      return "status draft";
     }
+
+    if (
+      value === "pending" ||
+      value === "under_review"
+    ) {
+      return "status pending";
+    }
+
+    if (value === "approved") {
+      return "status approved";
+    }
+
+    if (value === "live") {
+      return "status live";
+    }
+
+    if (value === "rejected") {
+      return "status rejected";
+    }
+
+    if (value === "takedown") {
+      return "status takedown";
+    }
+
+    return "status";
   }
 
-  /*
-   * =========================================================
-   * BUTTON HELPER
-   * =========================================================
-   */
-
-  function isBusy(
-    releaseId: string,
-    action: string
-  ) {
+  function artwork(release: Release) {
     return (
-      actionLoading ===
-      `${releaseId}-${action}`
+      release.artwork_url ||
+      release.cover_url ||
+      ""
     );
   }
-
-  /*
-   * =========================================================
-   * UI
-   * =========================================================
-   */
 
   return (
-    <main style={pageStyle}>
-      <div style={headerStyle}>
+    <main className="page">
+      <div className="top">
         <div>
-          <h1 style={titleStyle}>
-            Release Management
-          </h1>
+          <div className="badge">
+            ADMIN
+          </div>
 
-          <p style={subtitleStyle}>
-            Manage your complete music
-            catalog, submissions and
-            release status.
+          <h1>Release Management</h1>
+
+          <p>
+            Manage your complete music catalog,
+            submissions and release status.
           </p>
         </div>
 
         <button
+          className="refresh"
           onClick={() =>
-            loadReleases(
-              adminProfile
-            )
+            loadReleases(adminProfile)
           }
-          disabled={loading}
-          style={refreshButton}
+          disabled={refreshing}
         >
-          {loading
+          {refreshing
             ? "Refreshing..."
             : "↻ Refresh"}
         </button>
       </div>
 
-      {/* STATS */}
+      <div className="divider" />
 
-      <section style={statsGrid}>
-        <StatCard
+      <section className="stats">
+        <Stat
           title="Total"
-          value={releases.length}
+          value={stats.total}
+          icon="🎵"
         />
 
-        <StatCard
+        <Stat
           title="Draft"
-          value={
-            releases.filter(
-              (r) =>
-                String(
-                  r.status || ""
-                ).toLowerCase() ===
-                "draft"
-            ).length
-          }
+          value={stats.draft}
+          icon="📄"
         />
 
-        <StatCard
+        <Stat
           title="Pending"
-          value={
-            releases.filter(
-              (r) =>
-                [
-                  "pending",
-                  "under_review",
-                  "processing",
-                ].includes(
-                  String(
-                    r.status || ""
-                  ).toLowerCase()
-                )
-            ).length
-          }
+          value={stats.pending}
+          icon="⌛"
         />
 
-        <StatCard
+        <Stat
           title="Approved"
-          value={
-            releases.filter(
-              (r) =>
-                String(
-                  r.status || ""
-                ).toLowerCase() ===
-                "approved"
-            ).length
-          }
+          value={stats.approved}
+          icon="✓"
         />
 
-        <StatCard
+        <Stat
           title="Live"
-          value={
-            releases.filter(
-              (r) =>
-                String(
-                  r.status || ""
-                ).toLowerCase() ===
-                "live"
-            ).length
-          }
+          value={stats.live}
+          icon="🌐"
         />
 
-        <StatCard
+        <Stat
           title="Rejected"
-          value={
-            releases.filter(
-              (r) =>
-                String(
-                  r.status || ""
-                ).toLowerCase() ===
-                "rejected"
-            ).length
-          }
+          value={stats.rejected}
+          icon="⚠"
         />
 
-        <StatCard
+        <Stat
           title="Takedown"
-          value={
-            releases.filter(
-              (r) =>
-                String(
-                  r.status || ""
-                ).toLowerCase() ===
-                "takedown"
-            ).length
-          }
+          value={stats.takedown}
+          icon="⛔"
         />
       </section>
 
-      {/* TABLE */}
+      <section className="secondaryStats">
+        <div className="secondaryCard">
+          <span>Artists</span>
+          <strong>
+            {
+              new Set(
+                releases
+                  .map((r) => r.artist_name)
+                  .filter(Boolean)
+              ).size
+            }
+          </strong>
+          <small>Unique artists</small>
+        </div>
 
-      <section style={sectionStyle}>
-        <div style={tableHeaderStyle}>
+        <div className="secondaryCard">
+          <span>Labels</span>
+          <strong>
+            {
+              new Set(
+                releases
+                  .map((r) => r.label_name)
+                  .filter(Boolean)
+              ).size
+            }
+          </strong>
+          <small>Labels in catalog</small>
+        </div>
+
+        <div className="secondaryCard">
+          <span>Catalog Health</span>
+          <strong>
+            {stats.total
+              ? Math.round(
+                  ((stats.approved +
+                    stats.live) /
+                    stats.total) *
+                    100
+                )
+              : 0}
+            %
+          </strong>
+          <small>
+            Approved / Live releases
+          </small>
+        </div>
+
+        <div className="secondaryCard">
+          <span>Needs Attention</span>
+          <strong>
+            {stats.draft +
+              stats.pending +
+              stats.rejected}
+          </strong>
+          <small>
+            Releases requiring action
+          </small>
+        </div>
+      </section>
+
+      <section className="catalog">
+        <div className="catalogHeader">
           <div>
-            <h2 style={sectionTitleStyle}>
-              All Releases
-            </h2>
+            <h2>All Releases</h2>
+            <span>
+              {filteredReleases.length} of{" "}
+              {releases.length} releases
+            </span>
+          </div>
 
-            <p style={smallTextStyle}>
-              {releases.length} release
-              {releases.length !== 1
-                ? "s"
-                : ""}{" "}
-              in catalog
-            </p>
+          <div className="filters">
+            <input
+              value={search}
+              onChange={(e) =>
+                setSearch(e.target.value)
+              }
+              placeholder="Search title, artist, UPC..."
+            />
+
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value)
+              }
+            >
+              <option value="all">
+                All Status
+              </option>
+              <option value="draft">
+                Draft
+              </option>
+              <option value="pending">
+                Pending
+              </option>
+              <option value="under_review">
+                Under Review
+              </option>
+              <option value="approved">
+                Approved
+              </option>
+              <option value="live">
+                Live
+              </option>
+              <option value="rejected">
+                Rejected
+              </option>
+              <option value="takedown">
+                Takedown
+              </option>
+            </select>
           </div>
         </div>
 
         {loading ? (
-          <div style={emptyStyle}>
+          <div className="empty">
             Loading releases...
           </div>
-        ) : releases.length === 0 ? (
-          <div style={emptyStyle}>
-            No releases found.
+        ) : filteredReleases.length === 0 ? (
+          <div className="empty">
+            <div className="emptyIcon">
+              🎵
+            </div>
+
+            <h3>No releases found</h3>
+
+            <p>
+              Try changing your search or
+              status filter.
+            </p>
           </div>
         ) : (
-          <div
-            style={{
-              overflowX:
-                "auto",
-            }}
-          >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse:
-                  "collapse",
-                minWidth:
-                  "1700px",
-              }}
-            >
+          <div className="tableWrap">
+            <table>
               <thead>
-                <tr
-                  style={{
-                    color:
-                      "#94A3B8",
-                  }}
-                >
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Release
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Artist
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Label
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Uploaded By
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Email
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    White Label
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Too Lost ID
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Submitted
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Status
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Admin Note
-                  </th>
-
-                  <th
-                    align="left"
-                    style={
-                      thStyle
-                    }
-                  >
-                    Actions
-                  </th>
+                <tr>
+                  <th>RELEASE</th>
+                  <th>ARTIST</th>
+                  <th>TYPE</th>
+                  <th>STATUS</th>
+                  <th>TOO LOST ID</th>
+                  <th>UPC</th>
+                  <th>CREATED</th>
+                  <th>ACTIONS</th>
                 </tr>
               </thead>
 
               <tbody>
-                {releases.map(
-                  (release) => {
-                    const status =
-                      String(
-                        release.status ||
-                          "unknown"
-                      ).toLowerCase();
+                {filteredReleases.map(
+                  (release) => (
+                    <tr key={release.id}>
+                      <td>
+                        <div className="releaseCell">
+                          {artwork(release) ? (
+                            <img
+                              src={artwork(
+                                release
+                              )}
+                              alt=""
+                            />
+                          ) : (
+                            <div className="coverPlaceholder">
+                              🎵
+                            </div>
+                          )}
 
-                    return (
-                      <tr
-                        key={
-                          release.id
-                        }
-                        style={
-                          rowStyle
-                        }
-                      >
-                        {/* RELEASE */}
+                          <div>
+                            <strong>
+                              {release.title ||
+                                "Untitled"}
+                            </strong>
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={
-                              releaseTitleStyle
-                            }
-                          >
-                            {
-                              release.title ||
-                              "Untitled"
-                            }
+                            <small>
+                              ID: {release.id}
+                            </small>
                           </div>
+                        </div>
+                      </td>
 
-                          <div
-                            style={
-                              releaseIdStyle
+                      <td>
+                        {release.artist_name ||
+                          "-"}
+                      </td>
+
+                      <td>
+                        {release.type ||
+                          release.release_type ||
+                          "Single"}
+                      </td>
+
+                      <td>
+                        <span
+                          className={getStatusClass(
+                            release.status
+                          )}
+                        >
+                          {STATUS_LABELS[
+                            String(
+                              release.status ||
+                                ""
+                            ).toLowerCase()
+                          ] ||
+                            release.status ||
+                            "Unknown"}
+                        </span>
+                      </td>
+
+                      <td>
+                        {release.toolost_release_id ||
+                          "Not generated"}
+                      </td>
+
+                      <td>
+                        {release.upc ||
+                          "Not generated"}
+                      </td>
+
+                      <td>
+                        {release.created_at
+                          ? new Date(
+                              release.created_at
+                            ).toLocaleDateString(
+                              "en-GB"
+                            )
+                          : "-"}
+                      </td>
+
+                      <td>
+                        <div className="actions">
+                          <button
+                            className="viewBtn"
+                            onClick={() =>
+                              setSelectedRelease(
+                                release
+                              )
                             }
                           >
-                            ID:{" "}
-                            {
-                              release.id
-                            }
-                          </div>
-                        </td>
+                            View
+                          </button>
 
-                        {/* ARTIST */}
+                          {String(
+                            release.status || ""
+                          ).toLowerCase() ===
+                            "draft" && (
+                            <button
+                              className="submitBtn"
+                              onClick={() =>
+                                submitRelease(
+                                  release
+                                )
+                              }
+                            >
+                              Submit
+                            </button>
+                          )}
 
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            release.artist_name ||
-                            "-"
-                          }
-                        </td>
-
-                        {/* LABEL */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            release.label_name ||
-                            "-"
-                          }
-                        </td>
-
-                        {/* UPLOADED BY */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            release.uploaded_by_name
-                          }
-                        </td>
-
-                        {/* EMAIL */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            release.uploaded_by_email
-                          }
-                        </td>
-
-                        {/* WHITE LABEL */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            release.white_label_name
-                          }
-                        </td>
-
-                        {/* TOO LOST ID */}
-
-                        <td
-                          style={{
-                            ...tdStyle,
-                            fontFamily:
-                              "monospace",
-                          }}
-                        >
-                          {release.toolost_release_id ||
-                            "-"}
-                        </td>
-
-                        {/* DATE */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {release.created_at
-                            ? new Date(
-                                release.created_at
-                              ).toLocaleDateString()
-                            : "-"}
-                        </td>
-
-                        {/* STATUS */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <span
-                            style={{
-                              ...statusStyle,
-                              ...getStatusStyle(
-                                status
-                              ),
-                            }}
-                          >
-                            {status.toUpperCase()}
-                          </span>
-                        </td>
-
-                        {/* NOTE */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={{
-                              maxWidth:
-                                "220px",
-                              color:
-                                "#CBD5E1",
-                              fontSize:
-                                "12px",
-                            }}
-                          >
-                            {
-                              release.admin_note ||
-                              "-"
-                            }
-                          </div>
-                        </td>
-
-                        {/* ACTIONS */}
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <div
-                            style={
-                              actionsContainer
-                            }
-                          >
-                            {/* SUBMIT */}
-
-                            {status ===
-                              "draft" && (
+                          {String(
+                            release.status || ""
+                          ).toLowerCase() !==
+                            "approved" &&
+                            String(
+                              release.status || ""
+                            ).toLowerCase() !==
+                              "live" && (
                               <button
-                                disabled={isBusy(
-                                  release.id,
-                                  "submit"
-                                )}
+                                className="approveBtn"
                                 onClick={() =>
-                                  performReleaseAction(
+                                  openAction(
                                     release,
-                                    "submit"
+                                    "approve"
                                   )
                                 }
-                                style={
-                                  submitButton
-                                }
                               >
-                                {isBusy(
-                                  release.id,
-                                  "submit"
-                                )
-                                  ? "Submitting..."
-                                  : "Submit to Too Lost"}
+                                Approve
                               </button>
                             )}
 
-                            {/* REVIEW */}
-
+                          {String(
+                            release.status || ""
+                          ).toLowerCase() !==
+                            "rejected" && (
                             <button
-                              disabled={
-                                !!actionLoading
-                              }
+                              className="rejectBtn"
                               onClick={() =>
-                                updateInternalStatus(
-                                  release,
-                                  "under_review"
-                                )
-                              }
-                              style={
-                                smallButton
-                              }
-                            >
-                              Review
-                            </button>
-
-                            {/* APPROVE */}
-
-                            <button
-                              disabled={isBusy(
-                                release.id,
-                                "approve"
-                              )}
-                              onClick={() =>
-                                performReleaseAction(
-                                  release,
-                                  "approve"
-                                )
-                              }
-                              style={
-                                successButton
-                              }
-                            >
-                              {isBusy(
-                                release.id,
-                                "approve"
-                              )
-                                ? "..."
-                                : "Approve"}
-                            </button>
-
-                            {/* REJECT */}
-
-                            <button
-                              disabled={isBusy(
-                                release.id,
-                                "reject"
-                              )}
-                              onClick={() =>
-                                performReleaseAction(
+                                openAction(
                                   release,
                                   "reject"
                                 )
                               }
-                              style={
-                                dangerButton
-                              }
                             >
-                              {isBusy(
-                                release.id,
-                                "reject"
-                              )
-                                ? "..."
-                                : "Reject"}
+                              Reject
                             </button>
+                          )}
 
-                            {/* DRAFT */}
-
-                            {status !==
-                              "draft" && (
-                              <button
-                                disabled={isBusy(
-                                  release.id,
-                                  "draft"
-                                )}
-                                onClick={() =>
-                                  performReleaseAction(
-                                    release,
-                                    "draft"
-                                  )
-                                }
-                                style={
-                                  warningButton
-                                }
-                              >
-                                {isBusy(
-                                  release.id,
+                          {String(
+                            release.status || ""
+                          ).toLowerCase() !==
+                            "draft" && (
+                            <button
+                              className="draftBtn"
+                              onClick={() =>
+                                openAction(
+                                  release,
                                   "draft"
                                 )
-                                  ? "..."
-                                  : "Draft"}
-                              </button>
-                            )}
+                              }
+                            >
+                              Draft
+                            </button>
+                          )}
 
-                            {/* TAKEDOWN */}
-
-                            {status ===
-                              "live" && (
-                              <button
-                                disabled={isBusy(
-                                  release.id,
-                                  "takedown"
-                                )}
-                                onClick={() =>
-                                  performReleaseAction(
-                                    release,
-                                    "takedown"
-                                  )
-                                }
-                                style={
-                                  takedownButton
-                                }
-                              >
-                                {isBusy(
-                                  release.id,
+                          {(String(
+                            release.status || ""
+                          ).toLowerCase() ===
+                            "live" ||
+                            String(
+                              release.status || ""
+                            ).toLowerCase() ===
+                              "approved") && (
+                            <button
+                              className="takedownBtn"
+                              onClick={() =>
+                                openAction(
+                                  release,
                                   "takedown"
                                 )
-                                  ? "..."
-                                  : "Takedown"}
-                              </button>
-                            )}
-
-                            {/* DELIVERED */}
-
-                            <button
-                              disabled={
-                                !!actionLoading
-                              }
-                              onClick={() =>
-                                updateInternalStatus(
-                                  release,
-                                  "delivered"
-                                )
-                              }
-                              style={
-                                smallButton
                               }
                             >
-                              Delivered
+                              Takedown
                             </button>
-
-                            {/* LIVE */}
-
-                            <button
-                              disabled={
-                                !!actionLoading
-                              }
-                              onClick={() =>
-                                updateInternalStatus(
-                                  release,
-                                  "live"
-                                )
-                              }
-                              style={
-                                liveButton
-                              }
-                            >
-                              Live
-                            </button>
-
-                            {/* DSP */}
-
-                            <button
-                              disabled={
-                                !!actionLoading
-                              }
-                              onClick={() =>
-                                addDspDelivery(
-                                  release.id
-                                )
-                              }
-                              style={
-                                dspButton
-                              }
-                            >
-                              Add DSP
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  }
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
                 )}
               </tbody>
             </table>
           </div>
         )}
       </section>
+
+      {/* VIEW MODAL */}
+
+      {selectedRelease &&
+        !action && (
+          <div
+            className="overlay"
+            onClick={() =>
+              setSelectedRelease(null)
+            }
+          >
+            <div
+              className="modal"
+              onClick={(e) =>
+                e.stopPropagation()
+              }
+            >
+              <div className="modalHeader">
+                <div>
+                  <span className="modalBadge">
+                    RELEASE
+                  </span>
+
+                  <h2>
+                    {selectedRelease.title ||
+                      "Untitled"}
+                  </h2>
+                </div>
+
+                <button
+                  className="close"
+                  onClick={() =>
+                    setSelectedRelease(null)
+                  }
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="detailGrid">
+                <Detail
+                  label="Artist"
+                  value={
+                    selectedRelease.artist_name
+                  }
+                />
+
+                <Detail
+                  label="Label"
+                  value={
+                    selectedRelease.label_name
+                  }
+                />
+
+                <Detail
+                  label="Status"
+                  value={
+                    selectedRelease.status
+                  }
+                  badge
+                />
+
+                <Detail
+                  label="Type"
+                  value={
+                    selectedRelease.type ||
+                    selectedRelease.release_type ||
+                    "Single"
+                  }
+                />
+
+                <Detail
+                  label="Too Lost Release ID"
+                  value={
+                    selectedRelease.toolost_release_id
+                  }
+                />
+
+                <Detail
+                  label="UPC"
+                  value={
+                    selectedRelease.upc
+                  }
+                />
+
+                <Detail
+                  label="Uploaded By"
+                  value={
+                    selectedRelease.uploaded_by_name
+                  }
+                />
+
+                <Detail
+                  label="Email"
+                  value={
+                    selectedRelease.uploaded_by_email
+                  }
+                />
+
+                <Detail
+                  label="White Label"
+                  value={
+                    selectedRelease.white_label_name
+                  }
+                />
+
+                <Detail
+                  label="Created"
+                  value={
+                    selectedRelease.created_at
+                      ? new Date(
+                          selectedRelease.created_at
+                        ).toLocaleString()
+                      : "-"
+                  }
+                />
+              </div>
+
+              {selectedRelease.admin_note && (
+                <div className="noteBox">
+                  <strong>
+                    Admin Note
+                  </strong>
+
+                  <p>
+                    {
+                      selectedRelease.admin_note
+                    }
+                  </p>
+                </div>
+              )}
+
+              <div className="modalActions">
+                {String(
+                  selectedRelease.status || ""
+                ).toLowerCase() ===
+                  "draft" && (
+                  <button
+                    className="submitBtn big"
+                    onClick={() =>
+                      submitRelease(
+                        selectedRelease
+                      )
+                    }
+                  >
+                    Submit to Too Lost
+                  </button>
+                )}
+
+                <button
+                  className="approveBtn big"
+                  onClick={() => {
+                    openAction(
+                      selectedRelease,
+                      "approve"
+                    );
+                  }}
+                >
+                  Approve
+                </button>
+
+                <button
+                  className="rejectBtn big"
+                  onClick={() =>
+                    openAction(
+                      selectedRelease,
+                      "reject"
+                    )
+                  }
+                >
+                  Reject
+                </button>
+
+                <button
+                  className="draftBtn big"
+                  onClick={() =>
+                    openAction(
+                      selectedRelease,
+                      "draft"
+                    )
+                  }
+                >
+                  Move to Draft
+                </button>
+
+                <button
+                  className="takedownBtn big"
+                  onClick={() =>
+                    openAction(
+                      selectedRelease,
+                      "takedown"
+                    )
+                  }
+                >
+                  Takedown
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* ACTION MODAL */}
+
+      {selectedRelease &&
+        action && (
+          <div className="overlay">
+            <div className="modal actionModal">
+              <div className="modalHeader">
+                <div>
+                  <span className="modalBadge">
+                    {action.toUpperCase()}
+                  </span>
+
+                  <h2>
+                    {action === "submit"
+                      ? "Submit Release"
+                      : action ===
+                        "approve"
+                      ? "Approve Release"
+                      : action ===
+                        "reject"
+                      ? "Reject Release"
+                      : action ===
+                        "takedown"
+                      ? "Takedown Release"
+                      : "Move Release to Draft"}
+                  </h2>
+                </div>
+
+                <button
+                  className="close"
+                  onClick={closeAction}
+                  disabled={processing}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="selectedRelease">
+                <strong>
+                  {selectedRelease.title ||
+                    "Untitled"}
+                </strong>
+
+                <span>
+                  {selectedRelease.artist_name ||
+                    "-"}
+                </span>
+              </div>
+
+              {action === "submit" && (
+                <div className="warningBox">
+                  <strong>
+                    Submit to Too Lost
+                  </strong>
+
+                  <p>
+                    This will submit the release
+                    to Too Lost using its Too
+                    Lost release ID.
+                  </p>
+                </div>
+              )}
+
+              {action === "approve" && (
+                <div className="successBox">
+                  This release will be marked
+                  as approved.
+                </div>
+              )}
+
+              {action === "reject" && (
+                <div className="dangerBox">
+                  This release will be marked
+                  as rejected.
+                </div>
+              )}
+
+              {action === "takedown" && (
+                <div className="dangerBox">
+                  Enter the reason for taking
+                  down this release.
+                </div>
+              )}
+
+              {action !== "submit" && (
+                <label className="noteLabel">
+                  {action === "reject"
+                    ? "Rejection Reason *"
+                    : action === "takedown"
+                    ? "Takedown Reason *"
+                    : "Admin Note"}
+
+                  <textarea
+                    value={note}
+                    onChange={(e) =>
+                      setNote(e.target.value)
+                    }
+                    placeholder={
+                      action === "reject"
+                        ? "Enter rejection reason..."
+                        : action === "takedown"
+                        ? "Enter takedown reason..."
+                        : "Optional admin note..."
+                    }
+                    rows={5}
+                    disabled={processing}
+                  />
+                </label>
+              )}
+
+              <div className="confirmActions">
+                <button
+                  className="cancelBtn"
+                  onClick={closeAction}
+                  disabled={processing}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  className={
+                    action === "reject" ||
+                    action === "takedown"
+                      ? "confirmDanger"
+                      : "confirmBtn"
+                  }
+                  onClick={executeAction}
+                  disabled={processing}
+                >
+                  {processing
+                    ? "Processing..."
+                    : action === "submit"
+                    ? "Submit to Too Lost"
+                    : action ===
+                      "approve"
+                    ? "Approve Release"
+                    : action ===
+                      "reject"
+                    ? "Reject Release"
+                    : action ===
+                      "takedown"
+                    ? "Confirm Takedown"
+                    : "Move to Draft"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
     </main>
   );
 }
 
-/*
- * =========================================================
- * STAT CARD
- * =========================================================
- */
-
-function StatCard({
+function Stat({
   title,
   value,
+  icon,
 }: {
   title: string;
   value: number;
+  icon: string;
 }) {
   return (
-    <div style={statCardStyle}>
-      <div
-        style={{
-          color: "#94A3B8",
-          fontSize: "12px",
-        }}
-      >
-        {title}
+    <div className="stat">
+      <div>
+        <span>{title}</span>
+        <strong>{value}</strong>
       </div>
 
-      <div
-        style={{
-          fontSize: "25px",
-          fontWeight: 700,
-          marginTop: "8px",
-        }}
-      >
-        {value}
+      <div className="statIcon">
+        {icon}
       </div>
     </div>
   );
 }
 
-/*
- * =========================================================
- * STATUS COLORS
- * =========================================================
- */
+function Detail({
+  label,
+  value,
+  badge,
+}: {
+  label: string;
+  value?: string | number | null;
+  badge?: boolean;
+}) {
+  return (
+    <div className="detail">
+      <span>{label}</span>
 
-function getStatusStyle(
-  status: string
-) {
-  switch (status) {
-    case "draft":
-      return {
-        background: "#422006",
-        color: "#FBBF24",
-      };
-
-    case "pending":
-    case "under_review":
-    case "processing":
-      return {
-        background: "#172554",
-        color: "#60A5FA",
-      };
-
-    case "approved":
-      return {
-        background: "#052E16",
-        color: "#4ADE80",
-      };
-
-    case "live":
-      return {
-        background: "#022C22",
-        color: "#34D399",
-      };
-
-    case "rejected":
-      return {
-        background: "#450A0A",
-        color: "#F87171",
-      };
-
-    case "takedown":
-      return {
-        background: "#3F0D0D",
-        color: "#FB7185",
-      };
-
-    case "delivered":
-      return {
-        background: "#1E1B4B",
-        color: "#A78BFA",
-      };
-
-    default:
-      return {
-        background: "#374151",
-        color: "#D1D5DB",
-      };
-  }
+      {badge ? (
+        <span className="status pending">
+          {value || "-"}
+        </span>
+      ) : (
+        <strong>
+          {value || "-"}
+        </strong>
+      )}
+    </div>
+  );
 }
+<style jsx global>{`
+  * {
+    box-sizing: border-box;
+  }
 
-/*
- * =========================================================
- * STYLES
- * =========================================================
- */
+  body {
+    margin: 0;
+    background: #05070b;
+  }
 
-const pageStyle = {
-  minHeight: "100vh",
-  background: "#050816",
-  color: "white",
-  padding: "35px",
-  fontFamily:
-    "Arial, sans-serif",
-};
+  .page {
+    min-height: 100vh;
+    background: #05070b;
+    color: #f8fafc;
+    padding: 38px;
+    font-family:
+      Arial,
+      Helvetica,
+      sans-serif;
+  }
 
-const headerStyle = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems: "center",
-  marginBottom: "25px",
-};
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+  }
 
-const titleStyle = {
-  fontSize: "30px",
-  fontWeight: 700,
-  margin: 0,
-};
+  .badge,
+  .modalBadge {
+    display: inline-flex;
+    padding: 5px 9px;
+    border: 1px solid #1d4ed8;
+    background: #071735;
+    color: #60a5fa;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+  }
 
-const subtitleStyle = {
-  color: "#94A3B8",
-  marginTop: "8px",
-  fontSize: "14px",
-};
+  h1 {
+    margin: 8px 0 8px;
+    font-size: 30px;
+    letter-spacing: -1px;
+  }
 
-const refreshButton = {
-  padding: "10px 18px",
-  borderRadius: "10px",
-  border:
-    "1px solid #334155",
-  background: "#111827",
-  color: "white",
-  cursor: "pointer",
-};
+  .top p {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+  }
 
-const statsGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(auto-fit,minmax(130px,1fr))",
-  gap: "12px",
-  marginBottom: "25px",
-};
+  .divider {
+    height: 1px;
+    background: #1b1f27;
+    margin: 24px 0;
+  }
 
-const statCardStyle = {
-  background: "#0B1220",
-  border:
-    "1px solid #1F2937",
-  borderRadius: "14px",
-  padding: "18px",
-};
+  .refresh,
+  .viewBtn,
+  .cancelBtn {
+    border: 1px solid #292e38;
+    background: #101318;
+    color: white;
+    border-radius: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-weight: 700;
+  }
 
-const sectionStyle = {
-  background: "#0B1220",
-  padding: "20px",
-  borderRadius: "16px",
-  border:
-    "1px solid #1F2937",
-  overflowX: "auto" as const,
-};
+  .refresh:hover,
+  .viewBtn:hover,
+  .cancelBtn:hover {
+    background: #181d25;
+  }
 
-const tableHeaderStyle = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems: "center",
-  marginBottom: "18px",
-};
+  .refresh:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-const sectionTitleStyle = {
-  fontSize: "20px",
-  fontWeight: 700,
-  margin: 0,
-};
+  .stats {
+    display: grid;
+    grid-template-columns:
+      repeat(7, minmax(0, 1fr));
+    gap: 14px;
+  }
 
-const smallTextStyle = {
-  color: "#64748B",
-  fontSize: "12px",
-  marginTop: "5px",
-};
+  .stat {
+    min-height: 105px;
+    border: 1px solid #20242c;
+    background: #080a0e;
+    border-radius: 14px;
+    padding: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
 
-const emptyStyle = {
-  padding: "50px",
-  textAlign: "center" as const,
-  color: "#64748B",
-};
+  .stat span,
+  .secondaryCard span {
+    display: block;
+    color: #64748b;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
 
-const thStyle = {
-  padding:
-    "13px 10px",
-  borderBottom:
-    "1px solid #334155",
-  whiteSpace:
-    "nowrap" as const,
-  fontSize: "12px",
-};
+  .stat strong {
+    font-size: 24px;
+  }
 
-const tdStyle = {
-  padding:
-    "14px 10px",
-  borderBottom:
-    "1px solid #1F2937",
-  verticalAlign:
-    "top" as const,
-  fontSize: "13px",
-};
+  .statIcon {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #2a2f38;
+    border-radius: 9px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #111318;
+  }
 
-const rowStyle = {
-  borderBottom:
-    "1px solid #1F2937",
-};
+  .secondaryStats {
+    display: grid;
+    grid-template-columns:
+      repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }
 
-const releaseTitleStyle = {
-  fontWeight: 700,
-  color: "white",
-};
+  .secondaryCard {
+    border: 1px solid #20242c;
+    background: #080a0e;
+    border-radius: 14px;
+    padding: 18px;
+  }
 
-const releaseIdStyle = {
-  color: "#475569",
-  fontSize: "10px",
-  marginTop: "4px",
-};
+  .secondaryCard strong {
+    display: block;
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
 
-const statusStyle = {
-  padding:
-    "6px 10px",
-  borderRadius:
-    "999px",
-  fontSize: "10px",
-  fontWeight: 700,
-  whiteSpace:
-    "nowrap" as const,
-};
+  .secondaryCard small {
+    color: #475569;
+  }
 
-const actionsContainer = {
-  display: "flex",
-  flexWrap:
-    "wrap" as const,
-  gap: "6px",
-  minWidth: "300px",
-};
+  .catalog {
+    margin-top: 26px;
+    border: 1px solid #20242c;
+    background: #080a0e;
+    border-radius: 16px;
+    overflow: hidden;
+  }
 
-const smallButton = {
-  padding:
-    "7px 9px",
-  borderRadius:
-    "7px",
-  border:
-    "1px solid #334155",
-  background:
-    "#1E293B",
-  color: "white",
-  cursor:
-    "pointer",
-  fontSize: "11px",
-};
+  .catalogHeader {
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    border-bottom: 1px solid #20242c;
+  }
 
-const successButton = {
-  ...smallButton,
-  background:
-    "#15803D",
-  border:
-    "1px solid #16A34A",
-};
+  .catalogHeader h2 {
+    margin: 0 0 7px;
+    font-size: 17px;
+  }
 
-const dangerButton = {
-  ...smallButton,
-  background:
-    "#B91C1C",
-  border:
-    "1px solid #DC2626",
-};
+  .catalogHeader span {
+    color: #64748b;
+    font-size: 12px;
+  }
 
-const warningButton = {
-  ...smallButton,
-  background:
-    "#92400E",
-  border:
-    "1px solid #D97706",
-};
+  .filters {
+    display: flex;
+    gap: 10px;
+  }
 
-const submitButton = {
-  ...smallButton,
-  background:
-    "#2563EB",
-  border:
-    "1px solid #3B82F6",
-  fontWeight: 700,
-};
+  .filters input,
+  .filters select {
+    height: 38px;
+    background: #030507;
+    border: 1px solid #252a33;
+    color: white;
+    border-radius: 8px;
+    padding: 0 12px;
+    outline: none;
+  }
 
-const takedownButton = {
-  ...smallButton,
-  background:
-    "#7F1D1D",
-  border:
-    "1px solid #EF4444",
-};
+  .filters input {
+    width: 260px;
+  }
 
-const liveButton = {
-  ...smallButton,
-  background:
-    "#047857",
-  border:
-    "1px solid #10B981",
-};
+  .filters select {
+    min-width: 120px;
+  }
 
-const dspButton = {
-  ...smallButton,
-  background:
-    "#4338CA",
-  border:
-    "1px solid #6366F1",
-};
+  .tableWrap {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    min-width: 1250px;
+    border-collapse: collapse;
+  }
+
+  th {
+    text-align: left;
+    color: #64748b;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 14px 18px;
+    border-bottom: 1px solid #20242c;
+  }
+
+  td {
+    padding: 14px 18px;
+    border-bottom: 1px solid #161a20;
+    color: #cbd5e1;
+    font-size: 12px;
+    vertical-align: middle;
+  }
+
+  tbody tr:hover {
+    background: #0b0e13;
+  }
+
+  .releaseCell {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 260px;
+  }
+
+  .releaseCell img,
+  .coverPlaceholder {
+    width: 42px;
+    height: 42px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #151922;
+    border: 1px solid #252a33;
+  }
+
+  .coverPlaceholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .releaseCell strong {
+    display: block;
+    color: white;
+    margin-bottom: 5px;
+  }
+
+  .releaseCell small {
+    display: block;
+    color: #475569;
+    font-size: 9px;
+    max-width: 210px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status {
+    display: inline-flex;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    background: #20242b;
+    color: #cbd5e1;
+  }
+
+  .status.draft {
+    background: #332b00;
+    color: #facc15;
+  }
+
+  .status.pending {
+    background: #172554;
+    color: #60a5fa;
+  }
+
+  .status.approved,
+  .status.live {
+    background: #052e1b;
+    color: #34d399;
+  }
+
+  .status.rejected,
+  .status.takedown {
+    background: #3f0b12;
+    color: #fb7185;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 250px;
+  }
+
+  .actions button,
+  .modalActions button,
+  .confirmActions button {
+    border-radius: 8px;
+    padding: 8px 11px;
+    border: 1px solid transparent;
+    color: white;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .viewBtn {
+    background: #101318;
+    border-color: #292e38 !important;
+  }
+
+  .submitBtn,
+  .approveBtn,
+  .confirmBtn {
+    background: #2563eb;
+  }
+
+  .submitBtn:hover,
+  .approveBtn:hover,
+  .confirmBtn:hover {
+    background: #1d4ed8;
+  }
+
+  .rejectBtn,
+  .confirmDanger {
+    background: #b91c1c;
+  }
+
+  .rejectBtn:hover,
+  .confirmDanger:hover {
+    background: #991b1b;
+  }
+
+  .draftBtn {
+    background: #374151;
+  }
+
+  .takedownBtn {
+    background: #7f1d1d;
+  }
+
+  .big {
+    padding: 11px 15px !important;
+  }
+
+  .empty {
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+  }
+
+  .emptyIcon {
+    font-size: 42px;
+    margin-bottom: 12px;
+  }
+
+  .empty h3 {
+    margin: 0 0 6px;
+    color: white;
+  }
+
+  .empty p {
+    margin: 0;
+    font-size: 12px;
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    z-index: 1000;
+  }
+
+  .modal {
+    width: min(760px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: #0b0e13;
+    border: 1px solid #292e38;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow:
+      0 30px 100px
+      rgba(0, 0, 0, 0.5);
+  }
+
+  .actionModal {
+    width: min(600px, 100%);
+  }
+
+  .modalHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    align-items: flex-start;
+    margin-bottom: 22px;
+  }
+
+  .modalHeader h2 {
+    margin: 9px 0 0;
+    font-size: 23px;
+  }
+
+  .close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #292e38;
+    background: #11151b;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 20px;
+  }
+
+  .detailGrid {
+    display: grid;
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: #20242c;
+    border: 1px solid #20242c;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .detail {
+    background: #0b0e13;
+    padding: 14px;
+  }
+
+  .detail span:first-child {
+    display: block;
+    color: #64748b;
+    font-size: 10px;
+    margin-bottom: 7px;
+    text-transform: uppercase;
+  }
+
+  .detail strong {
+    color: white;
+    font-size: 13px;
+    word-break: break-word;
+  }
+
+  .noteBox {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid #292e38;
+    background: #0f1319;
+    border-radius: 10px;
+  }
+
+  .noteBox strong {
+    font-size: 12px;
+  }
+
+  .noteBox p {
+    color: #94a3b8;
+    font-size: 12px;
+    margin-bottom: 0;
+  }
+
+  .modalActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .selectedRelease {
+    padding: 14px;
+    background: #11151b;
+    border: 1px solid #252a33;
+    border-radius: 10px;
+    margin-bottom: 16px;
+  }
+
+  .selectedRelease strong {
+    display: block;
+    color: white;
+    margin-bottom: 5px;
+  }
+
+  .selectedRelease span {
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  .warningBox,
+  .successBox,
+  .dangerBox {
+    padding: 14px;
+    border-radius: 10px;
+    margin-bottom: 18px;
+    font-size: 12px;
+  }
+
+  .warningBox {
+    background: #332b00;
+    border: 1px solid #6b5a00;
+    color: #fde68a;
+  }
+
+  .successBox {
+    background: #052e1b;
+    border: 1px solid #065f46;
+    color: #6ee7b7;
+  }
+
+  .dangerBox {
+    background: #3f0b12;
+    border: 1px solid #7f1d1d;
+    color: #fda4af;
+  }
+
+  .warningBox p {
+    margin: 6px 0 0;
+  }
+
+  .noteLabel {
+    display: block;
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .noteLabel textarea {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    resize: vertical;
+    background: #05070b;
+    color: white;
+    border: 1px solid #292e38;
+    border-radius: 10px;
+    padding: 12px;
+    outline: none;
+    font-family: inherit;
+  }
+
+  .confirmActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .confirmActions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  @media (max-width: 1100px) {
+    .stats {
+      grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+    }
+
+    .secondaryStats {
+      grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 700px) {
+    .page {
+      padding: 20px;
+    }
+
+    .top {
+      flex-direction: column;
+    }
+
+    .stats {
+      grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+    }
+
+    .secondaryStats {
+      grid-template-columns: 1fr;
+    }
+
+    .catalogHeader {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .filters {
+      flex-direction: column;
+    }
+
+    .filters input {
+      width: 100%;
+    }
+
+    .detailGrid {
+      grid-template-columns: 1fr;
+    }
+  }
+`}</style>
