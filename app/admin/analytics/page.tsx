@@ -1,345 +1,1118 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
-import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+type Period =
+  | "lastSevenDays"
+  | "lastThirtyDays"
+  | "lastMonth"
+  | "lastThreeMonths"
+  | "lastSixMonths"
+  | "lastYear"
+  | "allTime";
+
+type Summary = {
+  totalRevenue: number;
+  latestRevenue: number;
+  latestRevenueMonth: string | null;
+  totalStreams: number;
+  totalSaves: number;
+  totalSkips: number;
+  averageEngagement: number;
+  totalTracks: number;
+  totalChannels: number;
+};
+
+type MonthlyRevenue = {
+  date: string;
+  total: number;
+};
+
+type Channel = {
+  name: string;
+  total: number;
+  logo: string | null;
+  logoDark: string | null;
+  logoDefault: string | null;
+};
+
+type Track = {
+  isrc: string;
+  track: string;
+  release: string;
+  totalStreams: number;
+  totalSaves: number;
+  totalSkips: number;
+  engagement: number;
+};
+
+type AnalyticsResponse = {
+  success: boolean;
+  period: Period;
+  generatedAt: string;
+  summary: Summary;
+  monthlyRevenue: MonthlyRevenue[];
+  channels: Channel[];
+  tracks: Track[];
+  topTracks: Track[];
+  apiErrors: any[];
+  error?: string;
+};
+
+const periodOptions: {
+  value: Period;
+  label: string;
+}[] = [
+  {
+    value: "lastSevenDays",
+    label: "Last 7 Days",
+  },
+  {
+    value: "lastThirtyDays",
+    label: "Last 30 Days",
+  },
+  {
+    value: "lastMonth",
+    label: "Last Month",
+  },
+  {
+    value: "lastThreeMonths",
+    label: "Last 3 Months",
+  },
+  {
+    value: "lastSixMonths",
+    label: "Last 6 Months",
+  },
+  {
+    value: "lastYear",
+    label: "Last Year",
+  },
+  {
+    value: "allTime",
+    label: "All Time",
+  },
+];
 
 export default function AdminAnalyticsPage() {
-  const router = useRouter();
+  const [period, setPeriod] =
+    useState<Period>("lastThirtyDays");
 
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalUsers: 0,
-    totalWhiteLabels: 0,
-    totalReleases: 0,
-    pendingReleases: 0,
-    liveReleases: 0,
-    totalStreams: 0,
-    totalRevenue: 0,
-    totalWithdrawals: 0,
-    pendingWithdrawals: 0,
-    supportTickets: 0,
-  });
+  const [data, setData] =
+    useState<AnalyticsResponse | null>(null);
 
-  const [topWhiteLabels, setTopWhiteLabels] = useState<any[]>([]);
-  const [topDSPs, setTopDSPs] = useState<any[]>([]);
-  const [topCountries, setTopCountries] = useState<any[]>([]);
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const loadAnalytics =
+    useCallback(async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await fetch(
+          `/api/admin/analytics?period=${period}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const json =
+          (await response.json()) as AnalyticsResponse;
+
+        if (
+          !response.ok ||
+          !json.success
+        ) {
+          throw new Error(
+            json.error ||
+              "Unable to load Too Lost analytics."
+          );
+        }
+
+        setData(json);
+      } catch (err) {
+        console.error(err);
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load analytics."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }, [period]);
 
   useEffect(() => {
-    checkAdmin();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    loadAnalytics();
+  }, [loadAnalytics]);
 
-  async function checkAdmin() {
-    const { data: userData } = await supabase.auth.getUser();
-
-    if (!userData.user) {
-      router.push("/login");
-      return;
-    }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role,status,white_label_id")
-      .eq("id", userData.user.id)
-      .single();
-
+  const maxRevenue = useMemo(() => {
     if (
-      !profile ||
-      profile.status !== "active" ||
-      !["master_admin", "white_label_admin"].includes(profile.role)
+      !data?.monthlyRevenue?.length
     ) {
-      alert("Admin access only.");
-      router.push("/dashboard");
-      return;
+      return 0;
     }
 
-    await loadAnalytics(profile);
-    setLoading(false);
-  }
-
-  async function loadAnalytics(profile: any) {
-    const { data: profiles } = await supabase.from("profiles").select("*");
-    const { data: whiteLabels } = await supabase.from("white_labels").select("*");
-
-    let releasesQuery = supabase.from("releases").select("*");
-    let ticketsQuery = supabase.from("support_tickets").select("*");
-
-    if (profile.role === "white_label_admin") {
-      releasesQuery = releasesQuery.eq("white_label_id", profile.white_label_id);
-      ticketsQuery = ticketsQuery.eq("white_label_id", profile.white_label_id);
-    }
-
-    const { data: releases } = await releasesQuery;
-    const { data: royalties } = await supabase.from("royalties").select("*");
-    const { data: withdrawals } = await supabase.from("withdrawals").select("*");
-    const { data: tickets } = await ticketsQuery;
-
-    let filteredProfiles = profiles || [];
-    let filteredWhiteLabels = whiteLabels || [];
-    let filteredRoyalties = royalties || [];
-    let filteredWithdrawals = withdrawals || [];
-
-    if (profile.role === "white_label_admin") {
-      filteredProfiles = filteredProfiles.filter(
-        (p) => p.white_label_id === profile.white_label_id
-      );
-
-      filteredWhiteLabels = filteredWhiteLabels.filter(
-        (w) => w.id === profile.white_label_id
-      );
-
-      const whiteLabelUserIds = filteredProfiles.map((p) => p.id);
-
-      filteredRoyalties = filteredRoyalties.filter((r) =>
-        whiteLabelUserIds.includes(r.user_id)
-      );
-
-      filteredWithdrawals = filteredWithdrawals.filter((w) =>
-        whiteLabelUserIds.includes(w.user_id)
-      );
-    }
-
-    const totalStreams = filteredRoyalties.reduce(
-      (sum, item) => sum + Number(item.streams || 0),
+    return Math.max(
+      ...data.monthlyRevenue.map(
+        (item) => item.total
+      ),
       0
     );
+  }, [data]);
 
-    const totalRevenue = filteredRoyalties.reduce(
-      (sum, item) => sum + Number(item.revenue || 0),
-      0
-    );
-
-    const totalWithdrawals = filteredWithdrawals.reduce(
-      (sum, item) => sum + Number(item.amount || 0),
-      0
-    );
-
-    setStats({
-      totalUsers: filteredProfiles.length,
-      totalWhiteLabels: filteredWhiteLabels.length,
-      totalReleases: releases?.length || 0,
-      pendingReleases:
-        releases?.filter((r) => r.status === "submitted").length || 0,
-      liveReleases: releases?.filter((r) => r.status === "live").length || 0,
-      totalStreams,
-      totalRevenue,
-      totalWithdrawals,
-      pendingWithdrawals:
-        filteredWithdrawals.filter((w) => w.status === "pending").length || 0,
-      supportTickets: tickets?.length || 0,
-    });
-
-    const labelRevenueMap: any = {};
-    const dspMap: any = {};
-    const countryMap: any = {};
-
-    filteredRoyalties.forEach((royalty) => {
-      const royaltyUser = filteredProfiles.find((p) => p.id === royalty.user_id);
-      const wl = filteredWhiteLabels.find(
-        (label) => label.id === royaltyUser?.white_label_id
-      );
-
-      const labelName = wl?.name || wl?.brand_name || "Nexorael Direct";
-      const dsp = royalty.dsp_name || "Unknown";
-      const country = royalty.country || "Unknown";
-      const revenue = Number(royalty.revenue || 0);
-
-      labelRevenueMap[labelName] = (labelRevenueMap[labelName] || 0) + revenue;
-      dspMap[dsp] = (dspMap[dsp] || 0) + revenue;
-      countryMap[country] = (countryMap[country] || 0) + revenue;
-    });
-
-    setTopWhiteLabels(
-      Object.entries(labelRevenueMap)
-        .map(([name, revenue]) => ({ name, revenue }))
-        .sort((a: any, b: any) => b.revenue - a.revenue)
-        .slice(0, 5)
-    );
-
-    setTopDSPs(
-      Object.entries(dspMap)
-        .map(([name, revenue]) => ({ name, revenue }))
-        .sort((a: any, b: any) => b.revenue - a.revenue)
-        .slice(0, 5)
-    );
-
-    setTopCountries(
-      Object.entries(countryMap)
-        .map(([name, revenue]) => ({ name, revenue }))
-        .sort((a: any, b: any) => b.revenue - a.revenue)
-        .slice(0, 5)
-    );
-  }
-
-  if (loading) {
+  if (loading && !data) {
     return (
       <main style={pageStyle}>
-        <h1>Loading admin analytics...</h1>
+        <h2>
+          Loading Too Lost analytics...
+        </h2>
       </main>
     );
   }
 
   return (
     <main style={pageStyle}>
-      <button onClick={() => router.push("/dashboard")} style={backButton}>
-        ← Back to Dashboard
-      </button>
+      {/* HEADER */}
 
-      <h1>Admin Analytics</h1>
+      <div style={headerStyle}>
+        <div>
+          <div style={badgeStyle}>
+            TOO LOST API
+          </div>
 
-      <p style={{ color: "#94A3B8" }}>
-        Platform performance, releases, revenue, withdrawals and support overview.
-      </p>
+          <h1 style={titleStyle}>
+            Analytics & Revenue
+          </h1>
 
-      <div style={statsGrid}>
-        <div style={cardStyle}>
-          <p>Total Users</p>
-          <h2>{stats.totalUsers}</h2>
+          <p style={subtitleStyle}>
+            Revenue, DSP performance,
+            streams and historical reports
+            directly from Too Lost.
+          </p>
         </div>
 
-        <div style={cardStyle}>
-          <p>White Labels</p>
-          <h2>{stats.totalWhiteLabels}</h2>
-        </div>
+        <div style={headerActions}>
+          <select
+            value={period}
+            onChange={(e) =>
+              setPeriod(
+                e.target.value as Period
+              )
+            }
+            style={selectStyle}
+          >
+            {periodOptions.map(
+              (option) => (
+                <option
+                  key={option.value}
+                  value={option.value}
+                >
+                  {option.label}
+                </option>
+              )
+            )}
+          </select>
 
-        <div style={cardStyle}>
-          <p>Total Releases</p>
-          <h2>{stats.totalReleases}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Pending Releases</p>
-          <h2>{stats.pendingReleases}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Live Releases</p>
-          <h2>{stats.liveReleases}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Total Streams</p>
-          <h2>{stats.totalStreams.toLocaleString()}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Total Revenue</p>
-          <h2>${stats.totalRevenue.toFixed(2)}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Total Withdrawals</p>
-          <h2>${stats.totalWithdrawals.toFixed(2)}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Pending Withdrawals</p>
-          <h2>{stats.pendingWithdrawals}</h2>
-        </div>
-
-        <div style={cardStyle}>
-          <p>Support Tickets</p>
-          <h2>{stats.supportTickets}</h2>
+          <button
+            type="button"
+            onClick={loadAnalytics}
+            disabled={loading}
+            style={refreshButton}
+          >
+            {loading
+              ? "Refreshing..."
+              : "↻ Refresh"}
+          </button>
         </div>
       </div>
 
-      <div style={gridStyle}>
-        <section style={sectionStyle}>
-          <h2>Top White Labels</h2>
-          {topWhiteLabels.length === 0 ? (
-            <p style={{ color: "#94A3B8" }}>No data yet.</p>
-          ) : (
-            topWhiteLabels.map((item, index) => (
-              <div key={index} style={rowStyle}>
-                <span>{item.name}</span>
-                <strong>${Number(item.revenue).toFixed(2)}</strong>
-              </div>
-            ))
-          )}
-        </section>
+      {error && (
+        <div style={errorBox}>
+          {error}
+        </div>
+      )}
 
-        <section style={sectionStyle}>
-          <h2>Top DSPs</h2>
-          {topDSPs.length === 0 ? (
-            <p style={{ color: "#94A3B8" }}>No data yet.</p>
-          ) : (
-            topDSPs.map((item, index) => (
-              <div key={index} style={rowStyle}>
-                <span>{item.name}</span>
-                <strong>${Number(item.revenue).toFixed(2)}</strong>
-              </div>
-            ))
-          )}
-        </section>
+      {data && (
+        <>
+          {/* SUMMARY CARDS */}
 
-        <section style={sectionStyle}>
-          <h2>Top Countries</h2>
-          {topCountries.length === 0 ? (
-            <p style={{ color: "#94A3B8" }}>No data yet.</p>
-          ) : (
-            topCountries.map((item, index) => (
-              <div key={index} style={rowStyle}>
-                <span>{item.name}</span>
-                <strong>${Number(item.revenue).toFixed(2)}</strong>
+          <div style={cardsGrid}>
+            <StatCard
+              title="Total Reported Revenue"
+              value={formatMoney(
+                data.summary.totalRevenue
+              )}
+              sub="Historical Too Lost sales"
+            />
+
+            <StatCard
+              title="Latest Month Revenue"
+              value={formatMoney(
+                data.summary.latestRevenue
+              )}
+              sub={
+                data.summary
+                  .latestRevenueMonth
+                  ? formatMonth(
+                      data.summary
+                        .latestRevenueMonth
+                    )
+                  : "No reporting month"
+              }
+            />
+
+            <StatCard
+              title="Streams"
+              value={formatNumber(
+                data.summary.totalStreams
+              )}
+              sub={periodLabel(period)}
+            />
+
+            <StatCard
+              title="DSP Channels"
+              value={String(
+                data.summary.totalChannels
+              )}
+              sub="Reporting channels"
+            />
+
+            <StatCard
+              title="Saves"
+              value={formatNumber(
+                data.summary.totalSaves
+              )}
+              sub="Analytics API"
+            />
+
+            <StatCard
+              title="Skips"
+              value={formatNumber(
+                data.summary.totalSkips
+              )}
+              sub="Analytics API"
+            />
+
+            <StatCard
+              title="Engagement"
+              value={`${data.summary.averageEngagement.toFixed(
+                2
+              )}%`}
+              sub="Average engagement"
+            />
+
+            <StatCard
+              title="Tracks"
+              value={String(
+                data.summary.totalTracks
+              )}
+              sub="Tracks in selected period"
+            />
+          </div>
+
+          {/* DSP REVENUE */}
+
+          <section style={panelStyle}>
+            <div style={panelHeader}>
+              <div>
+                <h2 style={panelTitle}>
+                  Revenue by Platform
+                </h2>
+
+                <p style={panelSubtitle}>
+                  Actual channel earnings
+                  reported by Too Lost
+                </p>
               </div>
-            ))
-          )}
-        </section>
-      </div>
+
+              <span style={countBadge}>
+                {data.channels.length} channels
+              </span>
+            </div>
+
+            {data.channels.length === 0 ? (
+              <EmptyState text="No channel revenue available." />
+            ) : (
+              <div style={channelGrid}>
+                {data.channels.map(
+                  (channel) => (
+                    <div
+                      key={channel.name}
+                      style={channelCard}
+                    >
+                      <div
+                        style={
+                          channelLogoWrap
+                        }
+                      >
+                        {channel.logoDark ||
+                        channel.logo ? (
+                          <img
+                            src={
+                              channel.logoDark ||
+                              channel.logo ||
+                              ""
+                            }
+                            alt={channel.name}
+                            style={
+                              channelLogo
+                            }
+                          />
+                        ) : (
+                          <span>
+                            ♪
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        style={{
+                          flex: 1,
+                        }}
+                      >
+                        <div
+                          style={
+                            channelName
+                          }
+                        >
+                          {channel.name}
+                        </div>
+
+                        <div
+                          style={
+                            channelRevenue
+                          }
+                        >
+                          {formatMoney(
+                            channel.total
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* MONTHLY REVENUE */}
+
+          <section style={panelStyle}>
+            <div style={panelHeader}>
+              <div>
+                <h2 style={panelTitle}>
+                  Historical Revenue
+                </h2>
+
+                <p style={panelSubtitle}>
+                  Previous Too Lost sales
+                  reporting periods
+                </p>
+              </div>
+
+              <span style={countBadge}>
+                {
+                  data.monthlyRevenue
+                    .length
+                }{" "}
+                reports
+              </span>
+            </div>
+
+            {data.monthlyRevenue.length ===
+            0 ? (
+              <EmptyState text="No historical reports found." />
+            ) : (
+              <div
+                style={
+                  revenueListStyle
+                }
+              >
+                {data.monthlyRevenue.map(
+                  (item) => {
+                    const percent =
+                      maxRevenue > 0
+                        ? Math.min(
+                            100,
+                            (item.total /
+                              maxRevenue) *
+                              100
+                          )
+                        : 0;
+
+                    return (
+                      <div
+                        key={item.date}
+                        style={
+                          revenueRow
+                        }
+                      >
+                        <div
+                          style={
+                            monthColumn
+                          }
+                        >
+                          {formatMonth(
+                            item.date
+                          )}
+                        </div>
+
+                        <div
+                          style={
+                            barTrack
+                          }
+                        >
+                          <div
+                            style={{
+                              ...barFill,
+                              width: `${percent}%`,
+                            }}
+                          />
+                        </div>
+
+                        <div
+                          style={
+                            moneyColumn
+                          }
+                        >
+                          {formatMoney(
+                            item.total
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* TOP TRACKS */}
+
+          <section style={panelStyle}>
+            <div style={panelHeader}>
+              <div>
+                <h2 style={panelTitle}>
+                  Track Analytics
+                </h2>
+
+                <p style={panelSubtitle}>
+                  Streams, saves, skips and
+                  engagement
+                </p>
+              </div>
+
+              <span style={countBadge}>
+                {periodLabel(period)}
+              </span>
+            </div>
+
+            {data.topTracks.length ===
+            0 ? (
+              <div style={emptyBox}>
+                <div
+                  style={{
+                    fontSize: "32px",
+                  }}
+                >
+                  ♫
+                </div>
+
+                <h3>
+                  No track analytics for
+                  this period
+                </h3>
+
+                <p>
+                  Try selecting{" "}
+                  <strong>
+                    All Time
+                  </strong>{" "}
+                  to check older Too Lost
+                  analytics data.
+                </p>
+              </div>
+            ) : (
+              <div style={tableWrap}>
+                <table
+                  style={
+                    tableStyle
+                  }
+                >
+                  <thead>
+                    <tr>
+                      <th
+                        style={thStyle}
+                      >
+                        Track
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        Release
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        ISRC
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        Streams
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        Saves
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        Skips
+                      </th>
+
+                      <th
+                        style={thStyle}
+                      >
+                        Engagement
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {data.topTracks.map(
+                      (
+                        track,
+                        index
+                      ) => (
+                        <tr
+                          key={`${track.isrc}-${index}`}
+                        >
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {track.track ||
+                              "-"}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {track.release ||
+                              "-"}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {track.isrc ||
+                              "-"}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {formatNumber(
+                              track.totalStreams
+                            )}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {formatNumber(
+                              track.totalSaves
+                            )}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {formatNumber(
+                              track.totalSkips
+                            )}
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {track.engagement.toFixed(
+                              2
+                            )}
+                            %
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* API STATUS */}
+
+          <section style={statusPanel}>
+            <div>
+              <strong>
+                Too Lost API Status
+              </strong>
+
+              <div
+                style={
+                  statusSubtitle
+                }
+              >
+                Last refreshed:{" "}
+                {new Date(
+                  data.generatedAt
+                ).toLocaleString(
+                  "en-IN"
+                )}
+              </div>
+            </div>
+
+            <span
+              style={
+                data.apiErrors
+                  .length === 0
+                  ? successBadge
+                  : warningBadge
+              }
+            >
+              {data.apiErrors
+                .length === 0
+                ? "● All APIs Connected"
+                : `${data.apiErrors.length} API Error(s)`}
+            </span>
+          </section>
+        </>
+      )}
     </main>
   );
 }
 
-const pageStyle = {
+function StatCard({
+  title,
+  value,
+  sub,
+}: {
+  title: string;
+  value: string;
+  sub: string;
+}) {
+  return (
+    <div style={statCard}>
+      <div style={statTitle}>
+        {title}
+      </div>
+
+      <div style={statValue}>
+        {value}
+      </div>
+
+      <div style={statSub}>
+        {sub}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({
+  text,
+}: {
+  text: string;
+}) {
+  return (
+    <div style={emptyBox}>
+      {text}
+    </div>
+  );
+}
+
+function formatMoney(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }
+  ).format(value || 0);
+}
+
+function formatNumber(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "en-US"
+  ).format(value || 0);
+}
+
+function formatMonth(
+  value: string
+) {
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleDateString(
+    "en-US",
+    {
+      month: "short",
+      year: "numeric",
+    }
+  );
+}
+
+function periodLabel(
+  period: Period
+) {
+  return (
+    periodOptions.find(
+      (item) =>
+        item.value === period
+    )?.label || period
+  );
+}
+
+/* ===============================
+   STYLES
+================================ */
+
+const pageStyle: React.CSSProperties = {
   minHeight: "100vh",
   background: "#050816",
-  color: "white",
-  padding: "35px",
-  fontFamily: "Arial, sans-serif",
+  color: "#fff",
+  padding: "34px",
 };
 
-const backButton = {
-  marginBottom: "20px",
-  padding: "10px 14px",
-  borderRadius: "10px",
-  border: "1px solid #334155",
-  background: "#111827",
-  color: "white",
-  cursor: "pointer",
-};
-
-const statsGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-  gap: "16px",
-  marginTop: "25px",
-};
-
-const cardStyle = {
-  background: "#111827",
-  padding: "20px",
-  borderRadius: "16px",
-  border: "1px solid #1F2937",
-};
-
-const gridStyle = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-  gap: "20px",
-  marginTop: "25px",
-};
-
-const sectionStyle = {
-  background: "#111827",
-  padding: "20px",
-  borderRadius: "16px",
-  border: "1px solid #1F2937",
-};
-
-const rowStyle = {
+const headerStyle: React.CSSProperties = {
   display: "flex",
-  justifyContent: "space-between",
-  padding: "12px 0",
-  borderBottom: "1px solid #1F2937",
+  justifyContent:
+    "space-between",
+  alignItems: "flex-start",
+  gap: "20px",
+  borderBottom:
+    "1px solid #1f2937",
+  paddingBottom: "26px",
+};
+
+const headerActions: React.CSSProperties = {
+  display: "flex",
+  gap: "10px",
+};
+
+const badgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  color: "#60a5fa",
+  border:
+    "1px solid #1d4ed8",
+  borderRadius: "6px",
+  padding: "5px 8px",
+  fontSize: "11px",
+  fontWeight: 700,
+};
+
+const titleStyle: React.CSSProperties = {
+  margin: "10px 0 6px",
+  fontSize: "30px",
+};
+
+const subtitleStyle: React.CSSProperties = {
+  margin: 0,
+  color: "#94a3b8",
+};
+
+const selectStyle: React.CSSProperties = {
+  background: "#090c14",
+  border:
+    "1px solid #293241",
+  color: "#fff",
+  padding: "11px 14px",
+  borderRadius: "8px",
+};
+
+const refreshButton: React.CSSProperties = {
+  background: "#2563eb",
+  color: "#fff",
+  border: 0,
+  borderRadius: "8px",
+  padding: "11px 16px",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const cardsGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit,minmax(190px,1fr))",
+  gap: "14px",
+  marginTop: "24px",
+};
+
+const statCard: React.CSSProperties = {
+  background: "#0d1224",
+  border:
+    "1px solid #20283a",
+  borderRadius: "14px",
+  padding: "20px",
+};
+
+const statTitle: React.CSSProperties = {
+  color: "#94a3b8",
+  fontSize: "12px",
+};
+
+const statValue: React.CSSProperties = {
+  fontSize: "25px",
+  fontWeight: 800,
+  marginTop: "8px",
+};
+
+const statSub: React.CSSProperties = {
+  color: "#64748b",
+  marginTop: "7px",
+  fontSize: "12px",
+};
+
+const panelStyle: React.CSSProperties = {
+  background: "#0d1224",
+  border:
+    "1px solid #20283a",
+  borderRadius: "16px",
+  marginTop: "22px",
+  overflow: "hidden",
+};
+
+const panelHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+  padding: "20px",
+  borderBottom:
+    "1px solid #20283a",
+};
+
+const panelTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: "18px",
+};
+
+const panelSubtitle: React.CSSProperties = {
+  margin:
+    "5px 0 0 0",
+  color: "#64748b",
+  fontSize: "12px",
+};
+
+const countBadge: React.CSSProperties = {
+  background: "#151b2c",
+  color: "#cbd5e1",
+  borderRadius: "8px",
+  padding: "7px 10px",
+  fontSize: "12px",
+};
+
+const channelGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit,minmax(250px,1fr))",
+  gap: "12px",
+  padding: "20px",
+};
+
+const channelCard: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "14px",
+  padding: "14px",
+  border:
+    "1px solid #20283a",
+  borderRadius: "12px",
+  background: "#090d19",
+};
+
+const channelLogoWrap: React.CSSProperties = {
+  width: "42px",
+  height: "42px",
+  borderRadius: "10px",
+  background: "#151b2c",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const channelLogo: React.CSSProperties = {
+  maxWidth: "30px",
+  maxHeight: "30px",
+  objectFit: "contain",
+};
+
+const channelName: React.CSSProperties = {
+  fontSize: "13px",
+  color: "#cbd5e1",
+};
+
+const channelRevenue: React.CSSProperties = {
+  marginTop: "5px",
+  fontSize: "17px",
+  fontWeight: 800,
+};
+
+const revenueListStyle: React.CSSProperties = {
+  padding: "20px",
+};
+
+const revenueRow: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "110px 1fr 110px",
+  alignItems: "center",
+  gap: "15px",
+  marginBottom: "12px",
+};
+
+const monthColumn: React.CSSProperties = {
+  color: "#94a3b8",
+  fontSize: "12px",
+};
+
+const barTrack: React.CSSProperties = {
+  background: "#171e30",
+  height: "8px",
+  borderRadius: "99px",
+  overflow: "hidden",
+};
+
+const barFill: React.CSSProperties = {
+  height: "100%",
+  background:
+    "linear-gradient(90deg,#2563eb,#22c55e)",
+  borderRadius: "99px",
+};
+
+const moneyColumn: React.CSSProperties = {
+  textAlign: "right",
+  fontWeight: 700,
+  fontSize: "12px",
+};
+
+const tableWrap: React.CSSProperties = {
+  overflowX: "auto",
+};
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse:
+    "collapse",
+};
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "13px 16px",
+  color: "#64748b",
+  fontSize: "11px",
+  borderBottom:
+    "1px solid #20283a",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "14px 16px",
+  borderBottom:
+    "1px solid #161d2d",
+  fontSize: "13px",
+};
+
+const emptyBox: React.CSSProperties = {
+  padding: "42px",
+  textAlign: "center",
+  color: "#64748b",
+};
+
+const errorBox: React.CSSProperties = {
+  marginTop: "20px",
+  background: "#350a12",
+  border:
+    "1px solid #7f1d1d",
+  color: "#fca5a5",
+  padding: "14px",
+  borderRadius: "10px",
+};
+
+const statusPanel: React.CSSProperties = {
+  marginTop: "22px",
+  background: "#0d1224",
+  border:
+    "1px solid #20283a",
+  borderRadius: "14px",
+  padding: "18px",
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+};
+
+const statusSubtitle: React.CSSProperties = {
+  color: "#64748b",
+  fontSize: "11px",
+  marginTop: "5px",
+};
+
+const successBadge: React.CSSProperties = {
+  color: "#4ade80",
+  background: "#052e1a",
+  padding: "8px 11px",
+  borderRadius: "8px",
+  fontSize: "12px",
+};
+
+const warningBadge: React.CSSProperties = {
+  color: "#fbbf24",
+  background: "#422006",
+  padding: "8px 11px",
+  borderRadius: "8px",
+  fontSize: "12px",
 };
