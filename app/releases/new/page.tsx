@@ -1113,6 +1113,11 @@ export default function NewReleasePage() {
                 upc:
                   requestedUpc ||
                   undefined,
+
+                // Send the dashboard DSP selection to the server so it can
+                // resolve real Too Lost platform IDs and configure delivery.
+                dsps:
+                  selectedDSPs,
               }),
           }
         );

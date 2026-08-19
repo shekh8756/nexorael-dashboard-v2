@@ -24,6 +24,7 @@ type ReleaseRow = {
   white_label_id?: string | null;
   admin_note?: string | null;
   toolost_release_id?: string | number | null;
+  selected_dsps?: string[] | null;
 };
 
 function getNewStatus(action: Action) {
@@ -1008,7 +1009,8 @@ for (const selected of selectedDSPs) {
         user_id,
         white_label_id,
         admin_note,
-        toolost_release_id
+        toolost_release_id,
+        selected_dsps
       `)
       .eq("id", id)
       .maybeSingle();
@@ -1066,6 +1068,89 @@ for (const selected of selectedDSPs) {
               "Too Lost is not connected. Please connect Too Lost again.",
           },
           { status: 401 }
+        );
+      }
+
+      const selectedDSPNames = Array.isArray(releaseRow.selected_dsps)
+        ? releaseRow.selected_dsps
+            .filter(
+              (name): name is string =>
+                typeof name === "string" && name.trim().length > 0
+            )
+            .map((name) => name.trim())
+        : [];
+
+      if (!selectedDSPNames.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "No DSPs are selected for this release.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const availablePlatforms = await getTooLostPlatforms(accessToken);
+      const resolvedStores = selectedDSPNames.map((dspName) => {
+        const matched = matchTooLostPlatform(dspName, availablePlatforms);
+        const platformId = matched
+          ? matched.__resolved_platform_id || getPlatformId(matched)
+          : null;
+
+        return {
+          dspName,
+          platformId: platformId ? String(platformId) : null,
+        };
+      });
+
+      const unmatchedDSPs = resolvedStores
+        .filter((store) => !store.platformId)
+        .map((store) => store.dspName);
+
+      if (unmatchedDSPs.length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Some selected DSPs could not be matched with Too Lost stores.",
+            unmatchedDSPs,
+          },
+          { status: 422 }
+        );
+      }
+
+      const storeIds = Array.from(
+        new Set(
+          resolvedStores
+            .map((store) => store.platformId)
+            .filter((platformId): platformId is string => Boolean(platformId))
+        )
+      );
+
+      const {
+        response: deliveryResponse,
+        data: deliveryData,
+      } = await tooLostApi(
+        accessToken,
+        `releases/${releaseRow.toolost_release_id}/delivery`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ stores: storeIds }),
+        }
+      );
+
+      if (!deliveryResponse.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Too Lost store configuration failed.",
+            tooLostStatus: deliveryResponse.status,
+            tooLostResponse: deliveryData,
+            stores: resolvedStores,
+          },
+          { status: 422 }
         );
       }
 
