@@ -1,82 +1,153 @@
-import AdminSidebar from "./components/AdminSidebar";
+import {
+  redirect,
+} from "next/navigation";
 
-export default function AdminLayout({
+import {
+  createServerSupabaseClient,
+} from "@/lib/supabase/server";
+
+import AdminSidebar
+  from "./components/AdminSidebar";
+
+export default async function
+AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const supabase =
+    await createServerSupabaseClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } =
+    await supabase.auth.getUser();
+
+  if (
+    userError ||
+    !user
+  ) {
+    redirect(
+      "/admin-login"
+    );
+  }
+
+  const {
+    data: profile,
+    error: profileError,
+  } =
+    await supabase
+      .from("profiles")
+      .select(
+        "role,status"
+      )
+      .eq(
+        "id",
+        user.id
+      )
+      .maybeSingle();
+
+  if (
+    profileError ||
+    !profile ||
+    profile.status !==
+      "active" ||
+    ![
+      "master_admin",
+      "white_label_admin",
+    ].includes(
+      profile.role
+    )
+  ) {
+    redirect(
+      "/admin-login"
+    );
+  }
+
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight:
+          "100vh",
+
         background:
-          "linear-gradient(180deg, #06101d 0%, #07111f 100%)",
-        color: "#f8fafc",
+          "linear-gradient(180deg,#06101d 0%,#081321 100%)",
+
+        color:
+          "#f8fafc",
       }}
     >
       <AdminSidebar />
 
-      {/* MAIN AREA */}
       <div
         style={{
-          marginLeft: "240px",
-          minHeight: "100vh",
-          background:
-            "linear-gradient(180deg, #06101d 0%, #081321 100%)",
+          marginLeft:
+            "240px",
+
+          minHeight:
+            "100vh",
         }}
       >
-        {/* TOP BAR */}
         <header
           style={{
-            height: "70px",
+            height:
+              "70px",
+
             background:
-              "rgba(6, 16, 29, 0.96)",
-            color: "#ffffff",
-            display: "flex",
-            alignItems: "center",
+              "rgba(6,16,29,.96)",
+
+            color:
+              "#fff",
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
             justifyContent:
               "space-between",
-            padding: "0 28px",
-            position: "sticky",
+
+            padding:
+              "0 28px",
+
+            position:
+              "sticky",
+
             top: 0,
+
             zIndex: 40,
+
             borderBottom:
               "1px solid #182536",
-            backdropFilter:
-              "blur(14px)",
-            boxShadow:
-              "0 8px 30px rgba(0,0,0,0.18)",
           }}
         >
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "16px",
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              gap:
+                "16px",
             }}
           >
-            <button
-              type="button"
-              aria-label="Toggle menu"
+            <span
               style={{
-                border: "none",
-                background:
-                  "transparent",
-                color: "#cbd5e1",
-                fontSize: "24px",
-                cursor: "pointer",
-                padding: "4px",
+                fontSize:
+                  "24px",
               }}
             >
               ☰
-            </button>
+            </span>
 
             <strong
               style={{
-                fontSize: "20px",
-                fontWeight: 700,
-                letterSpacing:
-                  "-0.02em",
+                fontSize:
+                  "20px",
               }}
             >
               Admin Panel
@@ -85,68 +156,78 @@ export default function AdminLayout({
 
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              gap:
+                "10px",
             }}
           >
             <div
               style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
+                width:
+                  "40px",
+
+                height:
+                  "40px",
+
+                borderRadius:
+                  "50%",
+
                 background:
                   "linear-gradient(135deg,#0ea5e9,#2563eb)",
-                color: "#ffffff",
-                display: "flex",
-                alignItems: "center",
+
+                display:
+                  "flex",
+
+                alignItems:
+                  "center",
+
                 justifyContent:
                   "center",
-                fontSize: "18px",
-                boxShadow:
-                  "0 0 20px rgba(14,165,233,0.25)",
               }}
             >
               👤
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                flexDirection:
-                  "column",
-                lineHeight: 1.2,
-              }}
-            >
-              <span
+            <div>
+              <div
                 style={{
-                  fontSize: "13px",
-                  fontWeight: 700,
+                  fontSize:
+                    "13px",
+
+                  fontWeight:
+                    700,
                 }}
               >
                 Admin
-              </span>
+              </div>
 
-              <span
+              <div
                 style={{
-                  fontSize: "11px",
-                  color: "#7dd3fc",
+                  fontSize:
+                    "11px",
+
+                  color:
+                    "#7dd3fc",
                 }}
               >
                 Nexorael
-              </span>
+              </div>
             </div>
           </div>
         </header>
 
-        {/* PAGE CONTENT */}
         <main
           style={{
             minHeight:
               "calc(100vh - 70px)",
-            padding: "24px",
-            background:
-              "transparent",
+
+            padding:
+              "24px",
           }}
         >
           {children}
