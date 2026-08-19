@@ -48,6 +48,11 @@ const menuItems = [
     icon: "▥",
   },
   {
+  label: "Invitations",
+  href: "/admin/invitations",
+  icon: "✉",
+  },
+  {
     label: "Settings",
     href: "/admin/settings",
     icon: "⚙",

@@ -16,7 +16,29 @@ export default function AdminUserDetailPage() {
   const userId = Array.isArray(params.id)
     ? params.id[0]
     : params.id;
+const DSP_LIST = [
+  "Spotify",
+  "Apple Music",
+  "YouTube Music",
+  "Amazon Music",
+  "Deezer",
+  "TikTok",
+  "Instagram / Facebook",
+  "Tidal",
+  "Pandora",
+  "SoundCloud",
+  "Boomplay",
+  "Audiomack",
+];
 
+const [platformAccess, setPlatformAccess] =
+  useState<string[]>([]);
+
+const [platformLoading, setPlatformLoading] =
+  useState(true);
+
+const [platformSaving, setPlatformSaving] =
+  useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [releases, setReleases] = useState<any[]>([]);
   const [royalties, setRoyalties] = useState<any[]>([]);
@@ -243,6 +265,106 @@ const loadLiveRevenue =
       setRevenueLoading(false);
     }
   }, [userId]);
+
+
+  const loadPlatformAccess =
+  useCallback(async () => {
+    if (!userId) return;
+
+    try {
+      setPlatformLoading(true);
+
+      const response = await fetch(
+        `/api/admin/users/${userId}/platform-access`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error ||
+            "Unable to load platform access."
+        );
+      }
+
+      const enabledPlatforms = (data.platforms || [])
+        .filter((row: any) => row.enabled !== false)
+        .map((row: any) => row.platform_name)
+        .filter(Boolean);
+
+      setPlatformAccess(enabledPlatforms);
+    } catch (error) {
+      console.error(
+        "Platform access error:",
+        error
+      );
+    } finally {
+      setPlatformLoading(false);
+    }
+  }, [userId]);
+
+function togglePlatform(platform: string) {
+  setPlatformAccess((prev) =>
+    prev.includes(platform)
+      ? prev.filter(
+          (item) => item !== platform
+        )
+      : [...prev, platform]
+  );
+}
+
+async function savePlatformAccess() {
+  if (!userId) return;
+
+  try {
+    setPlatformSaving(true);
+
+    const response = await fetch(
+      `/api/admin/users/${userId}/platform-access`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          platforms: platformAccess,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+          "Unable to save platform access."
+      );
+    }
+
+    alert("Platform access updated successfully.");
+
+    await loadPlatformAccess();
+  } catch (error) {
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Unable to save platform access."
+    );
+  } finally {
+    setPlatformSaving(false);
+  }
+}
+useEffect(() => {
+  loadLiveRevenue();
+}, [loadLiveRevenue]);
+
+useEffect(() => {
+  loadPlatformAccess();
+}, [loadPlatformAccess]);
+
   function getType() {
     const value = String(
       profile?.account_type ||
@@ -333,7 +455,7 @@ const loadLiveRevenue =
         </div>
       </section>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
         <Card title="Total Tracks" value={stats.totalTracks} />
         <Card title="Delivered / Live" value={stats.liveTracks} />
         <Card title="Pending" value={stats.pending} />
@@ -436,7 +558,106 @@ const loadLiveRevenue =
           />
         </div>
       </section>
+{/* PLATFORM ACCESS */}
 
+<section className="mt-6 rounded-2xl border border-[#17283a] bg-[#091522]">
+  <div className="flex flex-col justify-between gap-4 border-b border-[#17283a] p-5 md:flex-row md:items-center">
+    <div>
+      <h2 className="font-semibold">
+        Platform Access
+      </h2>
+
+      <p className="mt-1 text-xs text-slate-500">
+        Select which platforms this user is eligible to distribute releases to.
+      </p>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() =>
+          setPlatformAccess(DSP_LIST)
+        }
+        className="rounded-lg border border-[#203246] bg-[#07111d] px-3 py-2 text-xs text-slate-300"
+      >
+        Select All
+      </button>
+
+      <button
+        type="button"
+        onClick={() =>
+          setPlatformAccess([])
+        }
+        className="rounded-lg border border-[#203246] bg-[#07111d] px-3 py-2 text-xs text-slate-300"
+      >
+        Clear All
+      </button>
+
+      <button
+        type="button"
+        disabled={platformSaving}
+        onClick={savePlatformAccess}
+        className="rounded-lg bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+      >
+        {platformSaving
+          ? "Saving..."
+          : "Save Access"}
+      </button>
+    </div>
+  </div>
+
+  {platformLoading ? (
+    <div className="p-6 text-sm text-slate-500">
+      Loading platform access...
+    </div>
+  ) : (
+    <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {DSP_LIST.map((platform) => {
+        const enabled =
+          platformAccess.includes(platform);
+
+        return (
+          <button
+            key={platform}
+            type="button"
+            onClick={() =>
+              togglePlatform(platform)
+            }
+            className={`rounded-xl border p-4 text-left transition ${
+              enabled
+                ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                : "border-[#203246] bg-[#07111d] text-slate-500"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-semibold">
+                  {platform}
+                </div>
+
+                <div className="mt-1 text-[10px] opacity-60">
+                  {enabled
+                    ? "Distribution Enabled"
+                    : "Distribution Disabled"}
+                </div>
+              </div>
+
+              <div
+                className={`flex h-7 w-7 items-center justify-center rounded-full ${
+                  enabled
+                    ? "bg-sky-500 text-white"
+                    : "bg-[#17283a] text-slate-600"
+                }`}
+              >
+                {enabled ? "✓" : "×"}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  )}
+</section>
       {/* RELEASES */}
 
       <section className="mt-6 overflow-hidden rounded-2xl border border-[#17283a] bg-[#091522]">
