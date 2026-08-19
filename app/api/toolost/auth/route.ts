@@ -41,7 +41,8 @@ export async function GET() {
     response_type: "code",
 
     // Too Lost permissions
-    scope: "read:profile read:releases write:releases",
+    scope:
+  "read:profile read:releases write:releases read:sales read:analytics",
 
     state,
     code_challenge: codeChallenge,
