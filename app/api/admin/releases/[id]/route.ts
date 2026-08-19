@@ -782,7 +782,7 @@ export async function PATCH(
         error: targetReleaseError,
       } = await supabaseAdmin
         .from("releases")
-        .select("id,toolost_release_id")
+        .select("id,toolost_release_id,content_id_required")
         .eq("id", id)
         .maybeSingle();
 
@@ -806,10 +806,82 @@ export async function PATCH(
         );
       }
 
+      const platformAliases: Record<string, string> = {
+        "Instagram / Facebook": "Facebook/Instagram",
+        "Meta / Facebook": "Facebook/Instagram",
+      };
+
+      const additional: Record<string, boolean> = {};
+      const deliveryPlatforms: string[] = [];
+
+      for (const selectedDSP of selectedDSPs) {
+        switch (selectedDSP) {
+          case "SoundCloud":
+            additional.soundCloud = true;
+            break;
+
+          case "YouTube Content ID":
+            additional.youtube = true;
+            break;
+
+          case "Facebook Rights Manager":
+            additional.facebook = true;
+            break;
+
+          case "SoundExchange":
+            additional.soundExchange = true;
+            break;
+
+          case "Beatport":
+            additional.beatPort = true;
+            break;
+
+          case "Tracklib":
+            additional.trackLibs = true;
+            break;
+
+          case "LyricFind":
+            additional.lyricfind = true;
+            break;
+
+          default:
+            deliveryPlatforms.push(
+              platformAliases[selectedDSP] || selectedDSP
+            );
+        }
+      }
+
+      // Use the release-upload Content ID choice.
+      if (targetRelease.content_id_required) {
+        additional.youtube = true;
+      }
+
+      // Facebook/Instagram delivery also enables Facebook Rights Manager.
+      if (deliveryPlatforms.includes("Facebook/Instagram")) {
+        additional.facebook = true;
+      }
+
+      const uniquePlatforms = Array.from(new Set(deliveryPlatforms));
+
+      if (!uniquePlatforms.length && !Object.keys(additional).length) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Select at least one platform or additional service.",
+          },
+          { status: 400 }
+        );
+      }
+
       /*
        * Too Lost Release delivery docs:
        * PATCH /releases/{releaseId}/delivery
-       * { delivery: { platforms: string[] } }
+       * {
+       *   delivery: {
+       *     platforms: string[],
+       *     additional: { youtube?, facebook?, soundCloud?, ... }
+       *   }
+       * }
        */
       const {
         response: deliveryResponse,
@@ -824,7 +896,10 @@ export async function PATCH(
           },
           body: JSON.stringify({
             delivery: {
-              platforms: selectedDSPs,
+              platforms: uniquePlatforms,
+              ...(Object.keys(additional).length
+                ? { additional }
+                : {}),
             },
           }),
         }
