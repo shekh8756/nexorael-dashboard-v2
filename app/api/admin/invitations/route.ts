@@ -92,7 +92,7 @@ export async function POST(
           },
 
           redirectTo:
-            `${process.env.NEXT_PUBLIC_SITE_URL}/login`,
+  `${process.env.NEXT_PUBLIC_SITE_URL}/set-password`,
         }
       );
 
