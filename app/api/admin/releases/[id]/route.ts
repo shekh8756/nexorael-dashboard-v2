@@ -60,38 +60,15 @@ async function getAccessToken() {
 async function getTooLostPlatforms(
   accessToken: string
 ) {
-  const { response, data } =
-    await tooLostApi(
-      accessToken,
-      "lookup/platforms",
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      }
-    );
-
-  console.log(
-    "========== TOO LOST PLATFORMS =========="
-  );
-
-  console.log(
-    "Status:",
-    response.status
-  );
-
-  console.log(
-    "Raw response:",
-    JSON.stringify(
-      data,
-      null,
-      2
-    )
-  );
-
-  console.log(
-    "========================================"
+  const {
+    response,
+    data,
+  } = await tooLostApi(
+    accessToken,
+    "lookup/platforms",
+    {
+      method: "GET",
+    }
   );
 
   if (!response.ok) {
@@ -100,85 +77,67 @@ async function getTooLostPlatforms(
     );
   }
 
+  console.log(
+    "========== TOO LOST PLATFORM RESPONSE =========="
+  );
+
+  console.log(
+    JSON.stringify(data, null, 2)
+  );
+
+  console.log(
+    "================================================="
+  );
+
   /*
-   * Too Lost may return the list at different
-   * nesting levels depending on the API response.
+   * Too Lost may return platforms in different
+   * response wrappers.
    */
 
-  function findPlatformArray(
-    value: any
-  ): any[] {
-    if (Array.isArray(value)) {
-      return value;
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (
+    data &&
+    typeof data === "object"
+  ) {
+    const root = data as any;
+
+    if (Array.isArray(root.data)) {
+      return root.data;
+    }
+
+    if (Array.isArray(root.platforms)) {
+      return root.platforms;
+    }
+
+    if (Array.isArray(root.stores)) {
+      return root.stores;
     }
 
     if (
-      !value ||
-      typeof value !== "object"
+      root.data &&
+      typeof root.data === "object"
     ) {
-      return [];
-    }
+      if (
+        Array.isArray(root.data.platforms)
+      ) {
+        return root.data.platforms;
+      }
 
-    const possibleKeys = [
-      "data",
-      "platforms",
-      "stores",
-      "items",
-      "results",
-    ];
-
-    for (const key of possibleKeys) {
-      const result =
-        findPlatformArray(
-          value[key]
-        );
-
-      if (result.length > 0) {
-        return result;
+      if (
+        Array.isArray(root.data.stores)
+      ) {
+        return root.data.stores;
       }
     }
-
-    return [];
   }
 
-  const platforms =
-    findPlatformArray(data);
-
-  console.log(
-    "Too Lost platform count:",
-    platforms.length
-  );
-
-  console.log(
-    "Too Lost platforms:",
-    platforms.map(
-      (platform: any) => ({
-        id:
-          platform?.id ??
-          platform?.platform_id ??
-          platform?.store_id ??
-          platform?.storeId ??
-          platform?.platformId ??
-          platform?.code ??
-          platform?.key ??
-          null,
-
-        name:
-          platform?.name ??
-          platform?.title ??
-          platform?.label ??
-          platform?.display_name ??
-          platform?.displayName ??
-          platform?.slug ??
-          platform?.code ??
-          platform?.key ??
-          "",
-      })
-    )
-  );
-
-  return platforms;
+  return [];
 }
+
+
 /**
  * =========================================================
  * TOO LOST PLATFORM HELPERS
