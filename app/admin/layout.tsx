@@ -9,33 +9,43 @@ export default function AdminLayout({
     <div
       style={{
         minHeight: "100vh",
-        background: "#f4f6f8",
-        color: "#1f2933",
+        background:
+          "linear-gradient(180deg, #06101d 0%, #07111f 100%)",
+        color: "#f8fafc",
       }}
     >
       <AdminSidebar />
 
-      {/* Main area */}
+      {/* MAIN AREA */}
       <div
         style={{
           marginLeft: "240px",
           minHeight: "100vh",
+          background:
+            "linear-gradient(180deg, #06101d 0%, #081321 100%)",
         }}
       >
-        {/* Top bar */}
+        {/* TOP BAR */}
         <header
           style={{
-            height: "64px",
-            background: "#343434",
+            height: "70px",
+            background:
+              "rgba(6, 16, 29, 0.96)",
             color: "#ffffff",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 24px",
+            justifyContent:
+              "space-between",
+            padding: "0 28px",
             position: "sticky",
             top: 0,
             zIndex: 40,
-            borderBottom: "1px solid #454545",
+            borderBottom:
+              "1px solid #182536",
+            backdropFilter:
+              "blur(14px)",
+            boxShadow:
+              "0 8px 30px rgba(0,0,0,0.18)",
           }}
         >
           <div
@@ -50,9 +60,10 @@ export default function AdminLayout({
               aria-label="Toggle menu"
               style={{
                 border: "none",
-                background: "transparent",
-                color: "#ffffff",
-                fontSize: "22px",
+                background:
+                  "transparent",
+                color: "#cbd5e1",
+                fontSize: "24px",
                 cursor: "pointer",
                 padding: "4px",
               }}
@@ -62,8 +73,10 @@ export default function AdminLayout({
 
             <strong
               style={{
-                fontSize: "18px",
-                fontWeight: 600,
+                fontSize: "20px",
+                fontWeight: 700,
+                letterSpacing:
+                  "-0.02em",
               }}
             >
               Admin Panel
@@ -79,15 +92,19 @@ export default function AdminLayout({
           >
             <div
               style={{
-                width: "38px",
-                height: "38px",
+                width: "40px",
+                height: "40px",
                 borderRadius: "50%",
-                background: "#d1d5db",
-                color: "#374151",
+                background:
+                  "linear-gradient(135deg,#0ea5e9,#2563eb)",
+                color: "#ffffff",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
+                justifyContent:
+                  "center",
                 fontSize: "18px",
+                boxShadow:
+                  "0 0 20px rgba(14,165,233,0.25)",
               }}
             >
               👤
@@ -96,14 +113,15 @@ export default function AdminLayout({
             <div
               style={{
                 display: "flex",
-                flexDirection: "column",
+                flexDirection:
+                  "column",
                 lineHeight: 1.2,
               }}
             >
               <span
                 style={{
                   fontSize: "13px",
-                  fontWeight: 600,
+                  fontWeight: 700,
                 }}
               >
                 Admin
@@ -112,7 +130,7 @@ export default function AdminLayout({
               <span
                 style={{
                   fontSize: "11px",
-                  color: "#cbd5e1",
+                  color: "#7dd3fc",
                 }}
               >
                 Nexorael
@@ -121,11 +139,14 @@ export default function AdminLayout({
           </div>
         </header>
 
-        {/* Page content */}
+        {/* PAGE CONTENT */}
         <main
           style={{
-            minHeight: "calc(100vh - 64px)",
+            minHeight:
+              "calc(100vh - 70px)",
             padding: "24px",
+            background:
+              "transparent",
           }}
         >
           {children}
