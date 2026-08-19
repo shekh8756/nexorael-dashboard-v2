@@ -135,7 +135,38 @@ async function getTooLostPlatforms(
     }
   }
 
-  return [];
+  return collectPlatformObjects(data);
+}
+
+function collectPlatformObjects(value: unknown): any[] {
+  const result: any[] = [];
+  const seen = new Set<unknown>();
+
+  function visit(current: unknown) {
+    if (!current || typeof current !== "object" || seen.has(current)) {
+      return;
+    }
+
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current) visit(item);
+      return;
+    }
+
+    const object = current as Record<string, unknown>;
+
+    if (getPlatformId(object) && getPlatformName(object)) {
+      result.push(object);
+    }
+
+    for (const child of Object.values(object)) {
+      visit(child);
+    }
+  }
+
+  visit(value);
+  return result;
 }
 
 
@@ -709,24 +740,22 @@ export async function PATCH(
     */
 
     if (action === "save_dsps") {
-      const selectedDSPs = Array.isArray(body?.dsps)
-        ? body.dsps
-        : [];
+      const selectedDSPs: string[] = Array.isArray(body?.dsps)
+  ? Array.from(
+      new Set<string>(
+        body.dsps
+          .map((value: unknown) =>
+            String(value ?? "").trim()
+          )
+          .filter(
+            (value: string) =>
+              value.length > 0
+          )
+      )
+    )
+  : [];
 
-      const accessToken = await getAccessToken();
-
-      if (!accessToken) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost is not connected. Please connect Too Lost again.",
-          },
-          { status: 401 }
-        );
-      }
-
-      if (selectedDSPs.length === 0) {
+      if (!selectedDSPs.length) {
         return NextResponse.json(
           {
             success: false,
@@ -736,149 +765,87 @@ export async function PATCH(
         );
       }
 
-      /*
-      Get REAL Too Lost platforms.
-      */
+      const accessToken = await getAccessToken();
 
-      const platforms =
-        await getTooLostPlatforms(
-          accessToken
+      if (!accessToken) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Too Lost is not connected. Please connect Too Lost again.",
+          },
+          { status: 401 }
         );
+      }
+
+      const {
+        data: targetRelease,
+        error: targetReleaseError,
+      } = await supabaseAdmin
+        .from("releases")
+        .select("id,toolost_release_id")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (targetReleaseError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: targetReleaseError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      if (!targetRelease?.toolost_release_id) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Too Lost release ID is missing.",
+          },
+          { status: 400 }
+        );
+      }
 
       /*
-      Convert selected DSP names into
-      actual Too Lost IDs.
-      */
+       * Too Lost Release delivery docs:
+       * PATCH /releases/{releaseId}/delivery
+       * { delivery: { platforms: string[] } }
+       */
+      const {
+        response: deliveryResponse,
+        data: deliveryData,
+      } = await tooLostApi(
+        accessToken,
+        `releases/${targetRelease.toolost_release_id}/delivery`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            delivery: {
+              platforms: selectedDSPs,
+            },
+          }),
+        }
+      );
 
-      const selectedRows: {
-        release_id: string;
-        dsp_name: string;
-        toolost_platform_id: string;
-        status: string;
-      }[] = [];
-
-for (const selected of selectedDSPs) {
-  const selectedName =
-    typeof selected === "string"
-      ? selected.trim()
-      : selected?.name?.trim();
-
-  if (!selectedName) {
-    continue;
-  }
-
-  console.log(
-    "========================================"
-  );
-
-  console.log(
-    "Trying to match DSP:",
-    selectedName
-  );
-
-  const matched =
-    matchTooLostPlatform(
-      selectedName,
-      platforms
-    );
-
-  if (!matched) {
-    console.warn(
-      "DSP could not be matched:",
-      selectedName
-    );
-
-    continue;
-  }
-
-  /*
-   * IMPORTANT:
-   * First use the ID resolved by the
-   * recursive matcher.
-   */
-  const platformId =
-    matched.__resolved_platform_id ||
-    getPlatformId(matched);
-
-  const platformName =
-    matched.__resolved_platform_name ||
-    getPlatformName(matched);
-
-  if (!platformId) {
-    console.error(
-      "Matched platform has NO Too Lost ID:",
-      {
-        selectedName,
-        matched,
-      }
-    );
-
-    continue;
-  }
-
-  if (!platformName) {
-    console.error(
-      "Matched platform has NO name:",
-      {
-        selectedName,
-        matched,
-      }
-    );
-
-    continue;
-  }
-
-  selectedRows.push({
-    release_id: id,
-
-    dsp_name:
-      platformName,
-
-    toolost_platform_id:
-      String(platformId),
-
-    status:
-      "selected",
-  });
-
-  console.log(
-    "DSP SAVED:",
-    {
-      dashboardName:
-        selectedName,
-
-      toolostName:
-        platformName,
-
-      toolostPlatformId:
-        String(platformId),
-    }
-  );
-}
-
-      if (selectedRows.length === 0) {
+      if (!deliveryResponse.ok) {
         return NextResponse.json(
           {
             success: false,
             error:
-              "None of the selected DSPs could be matched with Too Lost platforms.",
-            availablePlatforms:
-              platforms.map((platform: any) => ({
-                id: getPlatformId(platform),
-                name: getPlatformName(platform),
-              })),
+              (deliveryData as any)?.message ||
+              (deliveryData as any)?.error ||
+              "Too Lost rejected the selected delivery platforms.",
+            tooLostStatus: deliveryResponse.status,
+            tooLostResponse: deliveryData,
           },
-          { status: 422 }
+          { status: deliveryResponse.status }
         );
       }
 
-      /*
-      Remove previous DSP selections.
-      */
-
-      const {
-        error: deleteError,
-      } = await supabaseAdmin
+      const { error: deleteError } = await supabaseAdmin
         .from("dsp_deliveries")
         .delete()
         .eq("release_id", id);
@@ -887,16 +854,18 @@ for (const selected of selectedDSPs) {
         return NextResponse.json(
           {
             success: false,
-            error:
-              deleteError.message,
+            error: deleteError.message,
           },
           { status: 500 }
         );
       }
 
-      /*
-      Save new DSP selections.
-      */
+      const selectedRows = selectedDSPs.map((dspName: string) => ({
+        release_id: id,
+        dsp_name: dspName,
+        toolost_platform_id: null,
+        status: "selected",
+      }));
 
       const {
         data: savedDSPs,
@@ -907,28 +876,30 @@ for (const selected of selectedDSPs) {
         .select("*");
 
       if (insertError) {
-        console.error(
-          "DSP save error:",
-          insertError
-        );
-
         return NextResponse.json(
           {
             success: false,
-            error:
-              insertError.message,
+            error: insertError.message,
           },
           { status: 500 }
         );
       }
 
+      await supabaseAdmin
+        .from("releases")
+        .update({
+          selected_dsps: selectedDSPs,
+        })
+        .eq("id", id);
+
       return NextResponse.json({
         success: true,
-        message:
-          "DSP selection saved successfully.",
+        message: "Too Lost delivery platforms saved successfully.",
         deliveries: savedDSPs,
+        tooLost: deliveryData,
       });
     }
+
 
     /*
     =====================================================
@@ -956,8 +927,10 @@ for (const selected of selectedDSPs) {
           accessToken
         );
 
+      const usablePlatforms = platforms;
+
       const formattedPlatforms =
-        platforms
+        usablePlatforms
           .map((platform: any) => ({
             id: getPlatformId(platform),
             name: getPlatformName(
@@ -1071,88 +1044,19 @@ for (const selected of selectedDSPs) {
         );
       }
 
-      const selectedDSPNames = Array.isArray(releaseRow.selected_dsps)
-        ? releaseRow.selected_dsps
-            .filter(
-              (name): name is string =>
-                typeof name === "string" && name.trim().length > 0
-            )
-            .map((name) => name.trim())
-        : [];
-
-      if (!selectedDSPNames.length) {
+      if (
+        !Array.isArray(releaseRow.selected_dsps) ||
+        releaseRow.selected_dsps.length === 0
+      ) {
         return NextResponse.json(
           {
             success: false,
-            error: "No DSPs are selected for this release.",
+            error: "Please save delivery platforms before approving this release.",
           },
           { status: 400 }
         );
       }
 
-      const availablePlatforms = await getTooLostPlatforms(accessToken);
-      const resolvedStores = selectedDSPNames.map((dspName) => {
-        const matched = matchTooLostPlatform(dspName, availablePlatforms);
-        const platformId = matched
-          ? matched.__resolved_platform_id || getPlatformId(matched)
-          : null;
-
-        return {
-          dspName,
-          platformId: platformId ? String(platformId) : null,
-        };
-      });
-
-      const unmatchedDSPs = resolvedStores
-        .filter((store) => !store.platformId)
-        .map((store) => store.dspName);
-
-      if (unmatchedDSPs.length) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Some selected DSPs could not be matched with Too Lost stores.",
-            unmatchedDSPs,
-          },
-          { status: 422 }
-        );
-      }
-
-      const storeIds = Array.from(
-        new Set(
-          resolvedStores
-            .map((store) => store.platformId)
-            .filter((platformId): platformId is string => Boolean(platformId))
-        )
-      );
-
-      const {
-        response: deliveryResponse,
-        data: deliveryData,
-      } = await tooLostApi(
-        accessToken,
-        `releases/${releaseRow.toolost_release_id}/delivery`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ stores: storeIds }),
-        }
-      );
-
-      if (!deliveryResponse.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Too Lost store configuration failed.",
-            tooLostStatus: deliveryResponse.status,
-            tooLostResponse: deliveryData,
-            stores: resolvedStores,
-          },
-          { status: 422 }
-        );
-      }
 
       /*
        * The release has already been created in Too Lost and therefore has a
