@@ -1070,277 +1070,113 @@ for (const selected of selectedDSPs) {
       }
 
       /*
-      Get DSP selections saved in Supabase.
-      */
+       * The release has already been created in Too Lost and therefore has a
+       * toolost_release_id. Admin approval should submit that existing release
+       * directly. DSP delivery settings are managed on the Too Lost release,
+       * so local dsp_deliveries platform IDs must not block approval.
+       */
+      {
+        const directSubmitPath =
+          `releases/${releaseRow.toolost_release_id}/submit`;
 
-      const {
-        data: deliveries,
-        error: deliveryDbError,
-      } = await supabaseAdmin
-        .from("dsp_deliveries")
-        .select(
-          "id,dsp_name,toolost_platform_id,status"
-        )
-        .eq("release_id", id);
-
-      if (deliveryDbError) {
-        return NextResponse.json(
+        const {
+          response: directSubmitResponse,
+          data: directSubmitData,
+        } = await tooLostApi(
+          accessToken,
+          directSubmitPath,
           {
-            success: false,
-            error:
-              deliveryDbError.message,
-          },
-          { status: 500 }
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              acceptTerms: true,
+              confirmRights: true,
+              confirmYoutubeRights: true,
+            }),
+          }
         );
-      }
 
-      if (
-        !deliveries ||
-        deliveries.length === 0
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "No DSPs selected for this release. Please select DSPs before approving.",
-          },
-          { status: 400 }
+        console.log(
+          "Too Lost direct submit status:",
+          directSubmitResponse.status
         );
-      }
-
-      /*
-      Actual Too Lost IDs.
-      */
-
-      const selectedPlatformIds =
-        deliveries
-          .map(
-            (delivery: any) =>
-              delivery.toolost_platform_id
-          )
-          .filter(Boolean)
-          .map(String);
-
-      if (
-        selectedPlatformIds.length === 0
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Selected DSPs do not have valid Too Lost platform IDs.",
-          },
-          { status: 400 }
+        console.log(
+          "Too Lost direct submit response:",
+          directSubmitData
         );
-      }
 
-      /*
-      ===================================================
-      TOO LOST DELIVERY
-      ===================================================
-      */
-
-      const deliveryPath =
-        `releases/${releaseRow.toolost_release_id}/delivery`;
-
-      const {
-        response:
-          deliveryResponse,
-        data:
-          deliveryData,
-      } = await tooLostApi(
-        accessToken,
-        deliveryPath,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            stores:
-              selectedPlatformIds,
-          }),
-        }
-      );
-
-      console.log(
-        "Too Lost delivery status:",
-        deliveryResponse.status
-      );
-
-      console.log(
-        "Too Lost delivery response:",
-        deliveryData
-      );
-
-      if (!deliveryResponse.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost delivery configuration failed.",
-            tooLostStatus:
-              deliveryResponse.status,
-            tooLostResponse:
-              deliveryData,
-          },
-          { status: 422 }
-        );
-      }
-
-      /*
-      ===================================================
-      TOO LOST SUBMIT
-      ===================================================
-      */
-
-      const submitPath =
-        `releases/${releaseRow.toolost_release_id}/submit`;
-
-      const {
-        response:
-          toolostResponse,
-        data:
-          toolostData,
-      } = await tooLostApi(
-        accessToken,
-        submitPath,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            acceptTerms: true,
-            confirmRights: true,
-            confirmYoutubeRights: true,
-          }),
-        }
-      );
-
-      console.log(
-        "Too Lost submit status:",
-        toolostResponse.status
-      );
-
-      console.log(
-        "Too Lost submit response:",
-        toolostData
-      );
-
-      /*
-      IMPORTANT:
-      Do not approve locally if Too Lost rejected.
-      */
-
-      if (!toolostResponse.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost submission failed.",
-            tooLostStatus:
-              toolostResponse.status,
-            tooLostResponse:
-              toolostData,
-          },
-          { status: 422 }
-        );
-      }
-
-      /*
-      ===================================================
-      TOO LOST SUCCESS
-      ===================================================
-      */
-
-      const adminNote =
-        note ||
-        "Approved and submitted to Too Lost.";
-
-      const {
-        data: updatedRelease,
-        error: updateError,
-      } = await supabaseAdmin
-        .from("releases")
-        .update({
-          status: "approved",
-          admin_note: adminNote,
-        })
-        .eq("id", id)
-        .select("*")
-        .single();
-
-      if (updateError) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Too Lost submission succeeded, but local status update failed.",
-            details:
-              updateError.message,
-          },
-          { status: 500 }
-        );
-      }
-
-      /*
-      Mark DSP records as submitted.
-      */
-
-      await supabaseAdmin
-        .from("dsp_deliveries")
-        .update({
-          status: "submitted",
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq("release_id", id);
-
-      /*
-      Notification.
-      */
-
-      if (releaseRow.user_id) {
-        try {
-          await supabaseAdmin
-            .from("notifications")
-            .insert({
-              user_id:
-                releaseRow.user_id,
-
-              title:
-                "Release Approved",
-
-              message:
-                `Your release "${releaseRow.title || "Untitled"}" has been approved and submitted to Too Lost.`,
-
-              type: "approved",
-
-              is_read: false,
-            });
-        } catch (error) {
-          console.error(
-            "Notification error:",
-            error
+        if (!directSubmitResponse.ok) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Too Lost submission failed.",
+              tooLostStatus: directSubmitResponse.status,
+              tooLostResponse: directSubmitData,
+            },
+            { status: 422 }
           );
         }
+
+        const directAdminNote =
+          note || "Approved and submitted to Too Lost.";
+
+        const {
+          data: directlyUpdatedRelease,
+          error: directUpdateError,
+        } = await supabaseAdmin
+          .from("releases")
+          .update({
+            status: "approved",
+            admin_note: directAdminNote,
+          })
+          .eq("id", id)
+          .select("*")
+          .single();
+
+        if (directUpdateError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                "Too Lost submission succeeded, but local status update failed.",
+              details: directUpdateError.message,
+            },
+            { status: 500 }
+          );
+        }
+
+        if (releaseRow.user_id) {
+          try {
+            await supabaseAdmin
+              .from("notifications")
+              .insert({
+                user_id: releaseRow.user_id,
+                title: "Release Approved",
+                message:
+                  `Your release "${releaseRow.title || "Untitled"}" has been approved and submitted to Too Lost.`,
+                type: "approved",
+                is_read: false,
+              });
+          } catch (notificationError) {
+            console.error(
+              "Notification error:",
+              notificationError
+            );
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          message:
+            "Release approved and submitted to Too Lost successfully.",
+          status: "approved",
+          release: directlyUpdatedRelease,
+          tooLost: directSubmitData,
+        });
       }
 
-      return NextResponse.json({
-        success: true,
-        message:
-          "Release approved and submitted to Too Lost successfully.",
-        status: "approved",
-        release:
-          updatedRelease,
-        tooLost:
-          toolostData,
-        dsps:
-          deliveries,
-      });
     }
 
     /*
