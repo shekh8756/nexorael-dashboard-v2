@@ -34,6 +34,11 @@ type ConfirmAction = {
   release: Release;
 } | null;
 
+type TooLostStore = {
+  id: string;
+  name: string;
+};
+
 export default function AdminPage() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +55,75 @@ export default function AdminPage() {
     useState<ConfirmAction>(null);
 
   const [note, setNote] = useState("");
+  const [tooLostStores, setTooLostStores] = useState<TooLostStore[]>([]);
+  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
+  const [storesLoading, setStoresLoading] = useState(false);
+  const [storesError, setStoresError] = useState("");
+
+  async function loadTooLostStores(release: Release) {
+    if (!release.id) return;
+
+    try {
+      setStoresLoading(true);
+      setStoresError("");
+      setTooLostStores([]);
+      setSelectedStoreIds([]);
+
+      const response = await fetch(
+        `/api/admin/releases/${release.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "get_dsps" }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to load Too Lost stores.");
+      }
+
+      const uniqueStores = Array.from(
+        new Map(
+          (Array.isArray(data.platforms) ? data.platforms : [])
+            .filter((store: any) => store?.id && store?.name)
+            .map((store: any) => [
+              String(store.id),
+              { id: String(store.id), name: String(store.name) },
+            ])
+        ).values()
+      ) as TooLostStore[];
+
+      setTooLostStores(uniqueStores);
+
+      const previouslySelected = new Set(
+        (Array.isArray(data.selected) ? data.selected : [])
+          .map((item: any) => String(item?.toolost_platform_id || ""))
+          .filter(Boolean)
+      );
+
+      setSelectedStoreIds(
+        uniqueStores
+          .filter((store) => previouslySelected.has(store.id))
+          .map((store) => store.id)
+      );
+    } catch (err) {
+      setStoresError(
+        err instanceof Error ? err.message : "Failed to load Too Lost stores."
+      );
+    } finally {
+      setStoresLoading(false);
+    }
+  }
+
+  function toggleStore(storeId: string) {
+    setSelectedStoreIds((current) =>
+      current.includes(storeId)
+        ? current.filter((id) => id !== storeId)
+        : [...current, storeId]
+    );
+  }
 
   async function loadReleases() {
     try {
@@ -226,10 +300,17 @@ export default function AdminPage() {
 
   function openAction(action: Action, release: Release) {
     setNote("");
+    setStoresError("");
+    setTooLostStores([]);
+    setSelectedStoreIds([]);
     setConfirmAction({
       action,
       release,
     });
+
+    if (action === "approve") {
+      void loadTooLostStores(release);
+    }
   }
 
   async function executeAction() {
@@ -256,6 +337,9 @@ export default function AdminPage() {
           body: JSON.stringify({
             action,
             note: note.trim(),
+            ...(action === "approve"
+              ? { storeIds: selectedStoreIds }
+              : {}),
           }),
         }
       );
@@ -935,6 +1019,91 @@ export default function AdminPage() {
               </div>
             )}
 
+            {confirmAction.action === "approve" && (
+              <div className="mt-5">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <label className="block text-xs font-semibold text-zinc-300">
+                    Too Lost Stores *
+                  </label>
+
+                  {tooLostStores.length > 0 && (
+                    <div className="flex gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedStoreIds(
+                            tooLostStores.map((store) => store.id)
+                          )
+                        }
+                        className="text-blue-400 hover:text-blue-300"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStoreIds([])}
+                        className="text-zinc-400 hover:text-white"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {storesLoading && (
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-4 text-sm text-zinc-400">
+                    Loading stores from Too Lost...
+                  </div>
+                )}
+
+                {!storesLoading && storesError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                    {storesError}
+                  </div>
+                )}
+
+                {!storesLoading && !storesError && tooLostStores.length === 0 && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-200">
+                    Too Lost returned no stores.
+                  </div>
+                )}
+
+                {!storesLoading && tooLostStores.length > 0 && (
+                  <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border border-white/10 bg-black/30 p-3">
+                    {tooLostStores.map((store) => {
+                      const checked = selectedStoreIds.includes(store.id);
+
+                      return (
+                        <label
+                          key={store.id}
+                          className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition ${
+                            checked
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-white"
+                              : "border-white/5 bg-white/[0.02] text-zinc-300 hover:bg-white/5"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleStore(store.id)}
+                            className="h-4 w-4 accent-emerald-500"
+                          />
+                          <span className="flex-1">{store.name}</span>
+                          <span className="font-mono text-[10px] text-zinc-600">
+                            {store.id}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  {selectedStoreIds.length} store(s) selected
+                </p>
+              </div>
+            )}
+
             <div className="mt-6 flex gap-3">
 
               <button
@@ -948,7 +1117,9 @@ export default function AdminPage() {
 
               <button
                 disabled={
-                  actionLoading !== null
+                  actionLoading !== null ||
+                  (confirmAction.action === "approve" &&
+                    (storesLoading || selectedStoreIds.length === 0))
                 }
                 onClick={executeAction}
                 className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold text-white disabled:opacity-50 ${
