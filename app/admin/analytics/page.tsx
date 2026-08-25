@@ -143,6 +143,12 @@ type PlatformAnalyticsResponse =
         };
       } | null;
 
+      countries?: {
+  country: string;
+  streams: number;
+  percentage: number;
+}[];
+
     additional?: Record<
       string,
       any
@@ -584,9 +590,13 @@ export default function AdminAnalyticsPage() {
       : [];
 
   const countryTotals =
-    Array.isArray(
-      platformPayload.countryTotal
-    )
+  Array.isArray(
+    platformData?.countries
+  )
+    ? platformData.countries
+    : Array.isArray(
+        platformPayload.countryTotal
+      )
       ? platformPayload.countryTotal
       : [];
 
