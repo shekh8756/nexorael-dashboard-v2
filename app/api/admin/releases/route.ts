@@ -1,8 +1,77 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function getAccessToken() {
+  const cookieStore = await cookies();
+
+  return cookieStore.get(
+    "toolost_access_token"
+  )?.value;
+}
+
+function mapTooLostStatus(
+  status?: string | null
+) {
+  const value = String(
+    status || ""
+  ).toLowerCase();
+
+  switch (value) {
+    case "draft":
+      return "draft";
+
+    case "in_review":
+      return "pending";
+
+    case "live":
+      return "live";
+
+    case "takedown_pending":
+      return "takedown_pending";
+
+    case "takedown_complete":
+      return "takedown";
+
+    default:
+      return value || "draft";
+  }
+}
+
+async function getTooLostRelease(
+  accessToken: string,
+  releaseId: string | number
+) {
+  const {
+    response,
+    data,
+  } = await tooLostApi(
+    accessToken,
+    `releases/${releaseId}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    console.warn(
+      "Too Lost release fetch failed:",
+      releaseId,
+      response.status
+    );
+
+    return null;
+  }
+
+  return (data as any)?.data || data;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -65,6 +134,144 @@ export async function GET(request: NextRequest) {
       }
 
       releases = result.data || [];
+// ---------------------------------------------
+// STEP 1B: SYNC TOO LOST STATUS
+// ---------------------------------------------
+
+try {
+  const accessToken =
+    await getAccessToken();
+
+  if (accessToken) {
+    const syncedReleases = [];
+
+    for (const release of releases) {
+      const toolostId =
+        release?.toolost_release_id ||
+        release?.toolostReleaseId ||
+        release?.toolost_id;
+
+      if (!toolostId) {
+        syncedReleases.push(
+          release
+        );
+
+        continue;
+      }
+
+      try {
+        const toolostRelease =
+          await getTooLostRelease(
+            accessToken,
+            toolostId
+          );
+
+        if (!toolostRelease) {
+          syncedReleases.push(
+            release
+          );
+
+          continue;
+        }
+
+        const rawToolostStatus =
+          toolostRelease?.status ||
+          null;
+
+        const syncedStatus =
+          mapTooLostStatus(
+            rawToolostStatus
+          );
+
+        const reviewNote =
+          toolostRelease?.review
+            ?.note ||
+          null;
+
+        const updatedRelease = {
+          ...release,
+
+          status:
+            syncedStatus,
+
+          toolost_status:
+            rawToolostStatus,
+
+          toolost_review_note:
+            reviewNote,
+        };
+
+        /*
+         * Persist latest Too Lost status
+         * back to Supabase.
+         */
+        const updatePayload: any = {
+          status:
+            syncedStatus,
+        };
+
+        /*
+         * Only include these columns if
+         * they exist in your table.
+         *
+         * If they don't exist yet,
+         * don't include them.
+         */
+        // updatePayload.toolost_status =
+        //   rawToolostStatus;
+        //
+        // updatePayload.toolost_review_note =
+        //   reviewNote;
+
+        const {
+          error: updateError,
+        } = await supabaseAdmin
+          .from("releases")
+          .update(
+            updatePayload
+          )
+          .eq(
+            "id",
+            release.id
+          );
+
+        if (updateError) {
+          console.warn(
+            "Too Lost status DB update failed:",
+            release.id,
+            updateError.message
+          );
+        }
+
+        syncedReleases.push(
+          updatedRelease
+        );
+      } catch (syncError) {
+        console.warn(
+          "Too Lost sync error:",
+          toolostId,
+          syncError
+        );
+
+        syncedReleases.push(
+          release
+        );
+      }
+    }
+
+    releases = syncedReleases;
+  } else {
+    console.warn(
+      "Too Lost access token unavailable. Using Supabase status."
+    );
+  }
+} catch (syncError) {
+  console.warn(
+    "Too Lost status sync failed:",
+    syncError
+  );
+}
+
     } catch (error) {
       console.error("RELEASE FETCH FAILED:", error);
 
