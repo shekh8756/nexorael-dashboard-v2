@@ -52,222 +52,113 @@ async function callTooLost(
    PLATFORM NORMALIZER
 ========================================= */
 
-function normalizePlatforms(
-  raw: any
+function normalizePlatforms(raw: any) {
+  const list =
+    raw?.data?.platforms ??
+    raw?.platforms ??
+    raw?.data ??
+    [];
+
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list
+    .map((item: any) => {
+      const value =
+        typeof item === "string"
+          ? item
+          : item?.platform ??
+            item?.value ??
+            item?.slug ??
+            item?.code ??
+            item?.id ??
+            "";
+
+      if (!value) {
+        return null;
+      }
+
+      return {
+        id: String(value),
+
+        value: String(value),
+
+        name: prettyPlatformName(
+          String(value)
+        ),
+
+        supportsOverview:
+          Boolean(
+            item?.supportsOverview
+          ),
+
+        supportsTotalStreams:
+          Boolean(
+            item?.supportsTotalStreams
+          ),
+
+        additionalTypes:
+          Array.isArray(
+            item?.additionalTypes
+          )
+            ? item.additionalTypes
+            : [],
+      };
+    })
+    .filter(Boolean);
+}
+
+function prettyPlatformName(
+  value: string
 ) {
-  const result: {
-    id: string;
-    value: string;
-    name: string;
-    logo?: string | null;
-  }[] = [];
+  const specialNames: Record<
+    string,
+    string
+  > = {
+    spotify: "Spotify",
+    apple: "Apple Music",
+    deezer: "Deezer",
+    tiktok: "TikTok",
+    meta: "Meta",
+    amazon: "Amazon Music",
+    soundcloud: "SoundCloud",
+    boomplay: "Boomplay",
+    pandora: "Pandora",
+    anghami: "Anghami",
+    awa: "AWA",
+    flo: "FLO",
+    iheart: "iHeart",
+    snap: "Snapchat",
+    netease: "NetEase",
+    canva: "Canva",
+    vevo: "VEVO",
+    uma: "UMA",
+    kkbox: "KKBOX",
+    jiosaavn: "JioSaavn",
+    wesing: "WeSing",
+    qqmusic: "QQ Music",
+    mixcloud: "Mixcloud",
+    audiomack: "Audiomack",
+    tidal: "TIDAL",
+    itunes: "iTunes",
+    alibaba: "Alibaba",
+    youtube: "YouTube",
+    shorts: "YouTube Shorts",
+    whatsapp: "WhatsApp",
+    shazam: "Shazam",
+    peloton: "Peloton",
+    resso: "Resso",
+  };
 
-  const seen =
-    new Set<string>();
-
-  function addPlatform(
-    value: any,
-    name?: any,
-    logo?: any
-  ) {
-    const platformValue =
-      String(
-        value ?? ""
-      ).trim();
-
-    if (
-      !platformValue
-    ) {
-      return;
-    }
-
-    const key =
-      platformValue.toLowerCase();
-
-    if (
-      seen.has(key)
-    ) {
-      return;
-    }
-
-    seen.add(key);
-
-    result.push({
-      id: platformValue,
-      value: platformValue,
-      name:
-        String(
-          name ??
-            platformValue
-        ).trim(),
-      logo:
-        logo
-          ? String(logo)
-          : null,
-    });
-  }
-
-  function walk(
-    value: any
-  ) {
-    if (
-      value == null
-    ) {
-      return;
-    }
-
-    if (
-      typeof value ===
-      "string"
-    ) {
-      addPlatform(
-        value,
-        value
-      );
-
-      return;
-    }
-
-    if (
-      Array.isArray(
-        value
-      )
-    ) {
-      value.forEach(
-        walk
-      );
-
-      return;
-    }
-
-    if (
-      typeof value !==
-      "object"
-    ) {
-      return;
-    }
-
-    const possibleValue =
-      value.slug ??
-      value.value ??
-      value.platform ??
-      value.code ??
-      value.key ??
-      value.id;
-
-    const possibleName =
-      value.name ??
-      value.label ??
-      value.title ??
-      value.displayName ??
-      value.platform_name;
-
-    if (
-      possibleValue != null &&
-      possibleName != null
-    ) {
-      addPlatform(
-        possibleValue,
-        possibleName,
-        value.logo ??
-          value.logoUrl ??
-          value.logo_url
-      );
-    }
-
-    /*
-     * Common API wrappers.
-     */
-    const wrappers = [
-      "data",
-      "platforms",
-      "items",
-      "results",
-      "channels",
-      "stores",
-    ];
-
-    let wrapperFound =
-      false;
-
-    for (
-      const key of wrappers
-    ) {
-      if (
-        value[key] != null
-      ) {
-        wrapperFound =
-          true;
-
-        walk(
-          value[key]
-        );
-      }
-    }
-
-    /*
-     * Handle object maps:
-     *
-     * {
-     *   tiktok: {...},
-     *   meta: {...}
-     * }
-     */
-    if (
-      !wrapperFound &&
-      possibleValue == null
-    ) {
-      for (
-        const [
-          key,
-          child,
-        ] of Object.entries(
-          value
-        )
-      ) {
-        if (
-          child &&
-          typeof child ===
-            "object"
-        ) {
-          const childAny =
-            child as any;
-
-          const childName =
-            childAny.name ??
-            childAny.label ??
-            childAny.title ??
-            key;
-
-          const childValue =
-            childAny.slug ??
-            childAny.value ??
-            childAny.platform ??
-            childAny.code ??
-            key;
-
-          addPlatform(
-            childValue,
-            childName,
-            childAny.logo ??
-              childAny.logoUrl ??
-              childAny.logo_url
-          );
-
-          walk(
-            child
-          );
-        }
-      }
-    }
-  }
-
-  walk(raw);
-
-  return result.sort(
-    (a, b) =>
-      a.name.localeCompare(
-        b.name
+  return (
+    specialNames[
+      value.toLowerCase()
+    ] ||
+    value
+      .replace(/[_-]/g, " ")
+      .replace(/\b\w/g, (c) =>
+        c.toUpperCase()
       )
   );
 }
