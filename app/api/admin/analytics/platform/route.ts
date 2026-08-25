@@ -1,59 +1,180 @@
-import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { tooLostApi } from "@/lib/toolost";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import {
+  cookies,
+} from "next/headers";
+
+import {
+  tooLostApi,
+} from "@/lib/toolost";
+
+export const runtime =
+  "nodejs";
+
+export const dynamic =
+  "force-dynamic";
+
+/* =========================================
+   ACCESS TOKEN
+========================================= */
 
 async function getAccessToken() {
-  const cookieStore = await cookies();
+  const cookieStore =
+    await cookies();
 
   return cookieStore.get(
     "toolost_access_token"
   )?.value;
 }
 
+/* =========================================
+   CALL TOO LOST
+========================================= */
+
 async function callTooLost(
   accessToken: string,
   path: string
 ) {
-  const { response, data } =
-    await tooLostApi(
-      accessToken,
-      path,
-      {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      }
-    );
+  const {
+    response,
+    data,
+  } = await tooLostApi(
+    accessToken,
+    path,
+    {
+      method: "GET",
+
+      headers: {
+        Accept:
+          "application/json",
+      },
+    }
+  );
 
   return {
     ok: response.ok,
-    status: response.status,
+    status:
+      response.status,
     data,
   };
 }
+
+/* =========================================
+   NORMALIZE PLATFORM LIST
+========================================= */
+
+function normalizePlatforms(
+  raw: any
+) {
+  const root =
+    raw?.data ??
+    raw?.platforms ??
+    raw ??
+    [];
+
+  const list =
+    Array.isArray(root)
+      ? root
+      : [];
+
+  return list
+    .map(
+      (
+        item: any,
+        index: number
+      ) => {
+        if (
+          typeof item ===
+          "string"
+        ) {
+          return {
+            id:
+              item,
+            value:
+              item,
+            name:
+              item,
+          };
+        }
+
+        const value =
+          item?.slug ??
+          item?.value ??
+          item?.platform ??
+          item?.code ??
+          item?.id ??
+          item?.name ??
+          String(index);
+
+        const name =
+          item?.name ??
+          item?.label ??
+          item?.title ??
+          item?.platform ??
+          String(value);
+
+        return {
+          ...item,
+
+          id:
+            item?.id ??
+            value,
+
+          value:
+            String(value),
+
+          name:
+            String(name),
+        };
+      }
+    )
+    .filter(
+      (
+        item: any
+      ) =>
+        Boolean(
+          item.value
+        )
+    );
+}
+
+/* =========================================
+   GET
+========================================= */
 
 export async function GET(
   request: NextRequest
 ) {
   try {
-    const { searchParams } =
-      new URL(request.url);
+    const {
+      searchParams,
+    } = new URL(
+      request.url
+    );
+
+    const action =
+      searchParams.get(
+        "action"
+      ) || "analytics";
 
     const platform =
-      searchParams.get("platform") ||
-      "tiktok";
+      searchParams.get(
+        "platform"
+      ) || "tiktok";
 
     const period =
-      searchParams.get("period") ||
+      searchParams.get(
+        "period"
+      ) ||
       "lastThirtyDays";
 
     const release =
-      searchParams.get("release") ||
-      "";
+      searchParams.get(
+        "release"
+      ) || "";
 
     const accessToken =
       await getAccessToken();
@@ -62,12 +183,70 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
+
           error:
             "Too Lost is not connected.",
         },
-        { status: 401 }
+        {
+          status: 401,
+        }
       );
     }
+
+    /* =====================================
+       PLATFORM LIST
+    ===================================== */
+
+    if (
+      action ===
+      "platforms"
+    ) {
+      const result =
+        await callTooLost(
+          accessToken,
+          "analytics/platforms"
+        );
+
+      if (!result.ok) {
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              "Unable to load Too Lost analytics platforms.",
+
+            status:
+              result.status,
+
+            response:
+              result.data,
+          },
+          {
+            status:
+              result.status,
+          }
+        );
+      }
+
+      const platforms =
+        normalizePlatforms(
+          result.data
+        );
+
+      return NextResponse.json({
+        success: true,
+
+        platforms,
+
+        generatedAt:
+          new Date().toISOString(),
+      });
+    }
+
+    /* =====================================
+       BASE QUERY
+    ===================================== */
 
     const baseParams =
       new URLSearchParams();
@@ -89,11 +268,9 @@ export async function GET(
       );
     }
 
-    const overviewPath =
-      `analytics/platforms/data?${baseParams.toString()}`;
-
-    const totalStreamsPath =
-      `analytics/platforms/total-streams?${baseParams.toString()}`;
+    /* =====================================
+       MAIN PLATFORM ENDPOINTS
+    ===================================== */
 
     const [
       overview,
@@ -101,59 +278,80 @@ export async function GET(
     ] = await Promise.all([
       callTooLost(
         accessToken,
-        overviewPath
+        `analytics/platforms/data?${baseParams.toString()}`
       ),
 
       callTooLost(
         accessToken,
-        totalStreamsPath
+        `analytics/platforms/total-streams?${baseParams.toString()}`
       ),
     ]);
 
-    /*
-     * Additional analytics types
-     * can differ by platform.
-     *
-     * Try common types individually.
-     */
+    /* =====================================
+       ADDITIONAL ANALYTICS
 
-    const additionalTypes = [
-      "comments",
-      "likes",
-      "shares",
-      "favorites",
-      "sources",
-      "countries",
-      "tracks",
-    ];
+       Too Lost supports different
+       information depending on platform.
+    ===================================== */
 
-    const additional: Record<
-      string,
-      any
-    > = {};
+    const additionalTypes =
+      [
+        "sources",
+        "countries",
+        "comments",
+        "likes",
+        "shares",
+        "favorites",
+        "impressions",
+        "usage",
+        "production",
+        "consumption",
+      ];
+
+    const additional:
+      Record<
+        string,
+        any
+      > = {};
 
     await Promise.all(
       additionalTypes.map(
-        async (type) => {
-          const params =
-            new URLSearchParams(
-              baseParams
+        async (
+          type
+        ) => {
+          try {
+            const params =
+              new URLSearchParams(
+                baseParams
+              );
+
+            params.set(
+              "type",
+              type
             );
 
-          params.set(
-            "type",
-            type
-          );
+            const result =
+              await callTooLost(
+                accessToken,
+                `analytics/platforms/additional?${params.toString()}`
+              );
 
-          const result =
-            await callTooLost(
-              accessToken,
-              `analytics/platforms/additional?${params.toString()}`
+            if (
+              result.ok &&
+              result.data
+            ) {
+              additional[
+                type
+              ] =
+                result.data;
+            }
+          } catch (
+            error
+          ) {
+            console.warn(
+              `Additional analytics failed: ${type}`,
+              error
             );
-
-          if (result.ok) {
-            additional[type] =
-              result.data;
           }
         }
       )
@@ -164,8 +362,10 @@ export async function GET(
 
       platform,
       period,
+
       release:
-        release || null,
+        release ||
+        null,
 
       overview:
         overview.ok
@@ -192,7 +392,7 @@ export async function GET(
     });
   } catch (error) {
     console.error(
-      "Platform analytics error:",
+      "PLATFORM ANALYTICS ERROR:",
       error
     );
 
