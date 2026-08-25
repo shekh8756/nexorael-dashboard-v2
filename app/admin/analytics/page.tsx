@@ -64,6 +64,59 @@ type AnalyticsResponse = {
   error?: string;
 };
 
+type PlatformStreamPoint = {
+  date: string;
+  streams: number;
+};
+
+type PlatformTrack = {
+  isrc: string;
+  streams: number;
+  track: string;
+  title: string;
+  release: string;
+  cover: string | null;
+};
+
+type PlatformSource = {
+  platform_name: string;
+  streams: number;
+};
+
+type PlatformAnalyticsResponse = {
+  success: boolean;
+  platform: string;
+  period: Period;
+  release: string | null;
+
+  overview: any;
+
+  totalStreams: {
+    data?: {
+      totalStreams?: PlatformStreamPoint[];
+      tracksTotal?: PlatformTrack[];
+      streamsTotal?: number;
+      countryTotal?: any[];
+    };
+  } | null;
+
+  additional?: {
+    sources?: {
+      data?: PlatformSource[];
+    };
+    [key: string]: any;
+  };
+
+  apiStatus?: {
+    overview?: number;
+    totalStreams?: number;
+  };
+
+  generatedAt?: string;
+
+  error?: string;
+};
+
 const periodOptions: {
   value: Period;
   label: string;
@@ -100,16 +153,44 @@ const periodOptions: {
 
 export default function AdminAnalyticsPage() {
   const [period, setPeriod] =
-    useState<Period>("lastThirtyDays");
+    useState<Period>(
+      "lastThirtyDays"
+    );
 
   const [data, setData] =
-    useState<AnalyticsResponse | null>(null);
+    useState<AnalyticsResponse | null>(
+      null
+    );
+
+  const [
+    platformData,
+    setPlatformData,
+  ] =
+    useState<PlatformAnalyticsResponse | null>(
+      null
+    );
 
   const [loading, setLoading] =
     useState(true);
 
+  const [
+    platformLoading,
+    setPlatformLoading,
+  ] = useState(true);
+
   const [error, setError] =
     useState("");
+
+  const [
+    platformError,
+    setPlatformError,
+  ] = useState("");
+
+  /*
+   * =========================================
+   * GENERAL ANALYTICS
+   * =========================================
+   */
 
   const loadAnalytics =
     useCallback(async () => {
@@ -117,13 +198,14 @@ export default function AdminAnalyticsPage() {
       setError("");
 
       try {
-        const response = await fetch(
-          `/api/admin/analytics?period=${period}`,
-          {
-            method: "GET",
-            cache: "no-store",
-          }
-        );
+        const response =
+          await fetch(
+            `/api/admin/analytics?period=${period}`,
+            {
+              method: "GET",
+              cache: "no-store",
+            }
+          );
 
         const json =
           (await response.json()) as AnalyticsResponse;
@@ -152,30 +234,158 @@ export default function AdminAnalyticsPage() {
       }
     }, [period]);
 
+  /*
+   * =========================================
+   * TIKTOK PLATFORM ANALYTICS
+   * =========================================
+   */
+
+  const loadPlatformAnalytics =
+    useCallback(async () => {
+      setPlatformLoading(true);
+      setPlatformError("");
+
+      try {
+        const response =
+          await fetch(
+            `/api/admin/analytics/platform?platform=tiktok&period=${period}`,
+            {
+              method: "GET",
+              cache: "no-store",
+            }
+          );
+
+        const json =
+          (await response.json()) as PlatformAnalyticsResponse;
+
+        if (
+          !response.ok ||
+          !json.success
+        ) {
+          throw new Error(
+            json.error ||
+              "Unable to load TikTok analytics."
+          );
+        }
+
+        setPlatformData(json);
+      } catch (err) {
+        console.error(
+          "Platform analytics:",
+          err
+        );
+
+        setPlatformError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load platform analytics."
+        );
+      } finally {
+        setPlatformLoading(
+          false
+        );
+      }
+    }, [period]);
+
   useEffect(() => {
     loadAnalytics();
-  }, [loadAnalytics]);
+    loadPlatformAnalytics();
+  }, [
+    loadAnalytics,
+    loadPlatformAnalytics,
+  ]);
 
-  const maxRevenue = useMemo(() => {
-    if (
-      !data?.monthlyRevenue?.length
-    ) {
-      return 0;
-    }
+  /*
+   * =========================================
+   * REVENUE CALCULATIONS
+   * =========================================
+   */
 
-    return Math.max(
-      ...data.monthlyRevenue.map(
-        (item) => item.total
-      ),
-      0
+  const maxRevenue =
+    useMemo(() => {
+      if (
+        !data?.monthlyRevenue
+          ?.length
+      ) {
+        return 0;
+      }
+
+      return Math.max(
+        ...data.monthlyRevenue.map(
+          (item) => item.total
+        ),
+        0
+      );
+    }, [data]);
+
+  /*
+   * =========================================
+   * PLATFORM DATA
+   * =========================================
+   */
+
+  const platformStreams =
+    platformData
+      ?.totalStreams?.data
+      ?.totalStreams || [];
+
+  const platformTracks =
+    platformData
+      ?.totalStreams?.data
+      ?.tracksTotal || [];
+
+  const platformTotal =
+    Number(
+      platformData
+        ?.totalStreams?.data
+        ?.streamsTotal || 0
     );
-  }, [data]);
+
+  const platformSources =
+    platformData?.additional
+      ?.sources?.data || [];
+
+  const sortedPlatformStreams =
+    useMemo(() => {
+      return [
+        ...platformStreams,
+      ].sort(
+        (a, b) =>
+          new Date(
+            a.date
+          ).getTime() -
+          new Date(
+            b.date
+          ).getTime()
+      );
+    }, [platformStreams]);
+
+  const maxPlatformStreams =
+    useMemo(() => {
+      if (
+        sortedPlatformStreams
+          .length === 0
+      ) {
+        return 0;
+      }
+
+      return Math.max(
+        ...sortedPlatformStreams.map(
+          (item) =>
+            Number(
+              item.streams || 0
+            )
+        ),
+        0
+      );
+    }, [sortedPlatformStreams]);
 
   if (loading && !data) {
     return (
       <main style={pageStyle}>
         <h2>
-          Loading Too Lost analytics...
+          Loading Too Lost
+          analytics...
         </h2>
       </main>
     );
@@ -196,18 +406,23 @@ export default function AdminAnalyticsPage() {
           </h1>
 
           <p style={subtitleStyle}>
-            Revenue, DSP performance,
-            streams and historical reports
+            Revenue, DSP
+            performance, platform
+            views, streams and
+            historical reports
             directly from Too Lost.
           </p>
         </div>
 
-        <div style={headerActions}>
+        <div
+          style={headerActions}
+        >
           <select
             value={period}
             onChange={(e) =>
               setPeriod(
-                e.target.value as Period
+                e.target
+                  .value as Period
               )
             }
             style={selectStyle}
@@ -215,10 +430,16 @@ export default function AdminAnalyticsPage() {
             {periodOptions.map(
               (option) => (
                 <option
-                  key={option.value}
-                  value={option.value}
+                  key={
+                    option.value
+                  }
+                  value={
+                    option.value
+                  }
                 >
-                  {option.label}
+                  {
+                    option.label
+                  }
                 </option>
               )
             )}
@@ -226,11 +447,20 @@ export default function AdminAnalyticsPage() {
 
           <button
             type="button"
-            onClick={loadAnalytics}
-            disabled={loading}
-            style={refreshButton}
+            onClick={() => {
+              loadAnalytics();
+              loadPlatformAnalytics();
+            }}
+            disabled={
+              loading ||
+              platformLoading
+            }
+            style={
+              refreshButton
+            }
           >
-            {loading
+            {loading ||
+            platformLoading
               ? "Refreshing..."
               : "↻ Refresh"}
           </button>
@@ -247,11 +477,14 @@ export default function AdminAnalyticsPage() {
         <>
           {/* SUMMARY CARDS */}
 
-          <div style={cardsGrid}>
+          <div
+            style={cardsGrid}
+          >
             <StatCard
               title="Total Reported Revenue"
               value={formatMoney(
-                data.summary.totalRevenue
+                data.summary
+                  .totalRevenue
               )}
               sub="Historical Too Lost sales"
             />
@@ -259,7 +492,8 @@ export default function AdminAnalyticsPage() {
             <StatCard
               title="Latest Month Revenue"
               value={formatMoney(
-                data.summary.latestRevenue
+                data.summary
+                  .latestRevenue
               )}
               sub={
                 data.summary
@@ -273,17 +507,35 @@ export default function AdminAnalyticsPage() {
             />
 
             <StatCard
+              title="TikTok Views"
+              value={
+                platformLoading
+                  ? "..."
+                  : formatNumber(
+                      platformTotal
+                    )
+              }
+              sub={periodLabel(
+                period
+              )}
+            />
+
+            <StatCard
               title="Streams"
               value={formatNumber(
-                data.summary.totalStreams
+                data.summary
+                  .totalStreams
               )}
-              sub={periodLabel(period)}
+              sub={periodLabel(
+                period
+              )}
             />
 
             <StatCard
               title="DSP Channels"
               value={String(
-                data.summary.totalChannels
+                data.summary
+                  .totalChannels
               )}
               sub="Reporting channels"
             />
@@ -291,7 +543,8 @@ export default function AdminAnalyticsPage() {
             <StatCard
               title="Saves"
               value={formatNumber(
-                data.summary.totalSaves
+                data.summary
+                  .totalSaves
               )}
               sub="Analytics API"
             />
@@ -299,57 +552,663 @@ export default function AdminAnalyticsPage() {
             <StatCard
               title="Skips"
               value={formatNumber(
-                data.summary.totalSkips
+                data.summary
+                  .totalSkips
               )}
               sub="Analytics API"
             />
 
             <StatCard
-              title="Engagement"
-              value={`${data.summary.averageEngagement.toFixed(
-                2
-              )}%`}
-              sub="Average engagement"
-            />
-
-            <StatCard
               title="Tracks"
               value={String(
-                data.summary.totalTracks
+                data.summary
+                  .totalTracks
               )}
               sub="Tracks in selected period"
             />
           </div>
 
-          {/* DSP REVENUE */}
+          {/* ===================================
+              TIKTOK PLATFORM ANALYTICS
+          ==================================== */}
 
-          <section style={panelStyle}>
-            <div style={panelHeader}>
+          <section
+            style={platformPanel}
+          >
+            <div
+              style={
+                platformHeader
+              }
+            >
               <div>
-                <h2 style={panelTitle}>
-                  Revenue by Platform
+                <div
+                  style={
+                    platformBadge
+                  }
+                >
+                  PLATFORM ANALYTICS
+                </div>
+
+                <h2
+                  style={
+                    platformTitle
+                  }
+                >
+                  TikTok Analytics
                 </h2>
 
-                <p style={panelSubtitle}>
-                  Actual channel earnings
-                  reported by Too Lost
+                <p
+                  style={
+                    panelSubtitle
+                  }
+                >
+                  Real Too Lost
+                  platform usage data.
                 </p>
               </div>
 
-              <span style={countBadge}>
-                {data.channels.length} channels
+              <div
+                style={
+                  platformStatusWrap
+                }
+              >
+                <span
+                  style={
+                    connectedBadge
+                  }
+                >
+                  ● LIVE API
+                </span>
+              </div>
+            </div>
+
+            {platformError && (
+              <div
+                style={errorBox}
+              >
+                {
+                  platformError
+                }
+              </div>
+            )}
+
+            {platformLoading ? (
+              <div
+                style={emptyBox}
+              >
+                Loading TikTok
+                analytics...
+              </div>
+            ) : (
+              <>
+                {/* PLATFORM SUMMARY */}
+
+                <div
+                  style={
+                    platformStatsGrid
+                  }
+                >
+                  <div
+                    style={
+                      platformStatCard
+                    }
+                  >
+                    <div
+                      style={
+                        platformStatLabel
+                      }
+                    >
+                      Total Views
+                    </div>
+
+                    <div
+                      style={
+                        platformBigValue
+                      }
+                    >
+                      {formatNumber(
+                        platformTotal
+                      )}
+                    </div>
+
+                    <div
+                      style={
+                        statSub
+                      }
+                    >
+                      TikTok
+                    </div>
+                  </div>
+
+                  <div
+                    style={
+                      platformStatCard
+                    }
+                  >
+                    <div
+                      style={
+                        platformStatLabel
+                      }
+                    >
+                      Reporting
+                      Tracks
+                    </div>
+
+                    <div
+                      style={
+                        platformBigValue
+                      }
+                    >
+                      {
+                        platformTracks.length
+                      }
+                    </div>
+
+                    <div
+                      style={
+                        statSub
+                      }
+                    >
+                      Tracks with
+                      platform usage
+                    </div>
+                  </div>
+
+                  <div
+                    style={
+                      platformStatCard
+                    }
+                  >
+                    <div
+                      style={
+                        platformStatLabel
+                      }
+                    >
+                      Traffic Sources
+                    </div>
+
+                    <div
+                      style={
+                        platformBigValue
+                      }
+                    >
+                      {
+                        platformSources.length
+                      }
+                    </div>
+
+                    <div
+                      style={
+                        statSub
+                      }
+                    >
+                      Too Lost
+                      source records
+                    </div>
+                  </div>
+                </div>
+
+                {/* DAILY VIEW CHART */}
+
+                <div
+                  style={
+                    chartSection
+                  }
+                >
+                  <div
+                    style={
+                      chartHeader
+                    }
+                  >
+                    <div>
+                      <h3
+                        style={
+                          chartTitle
+                        }
+                      >
+                        Views Over
+                        Time
+                      </h3>
+
+                      <p
+                        style={
+                          panelSubtitle
+                        }
+                      >
+                        Date-wise TikTok
+                        views reported by
+                        Too Lost
+                      </p>
+                    </div>
+
+                    <span
+                      style={
+                        countBadge
+                      }
+                    >
+                      {periodLabel(
+                        period
+                      )}
+                    </span>
+                  </div>
+
+                  {sortedPlatformStreams.length ===
+                  0 ? (
+                    <EmptyState text="No TikTok timeline data available." />
+                  ) : (
+                    <div
+                      style={
+                        chartArea
+                      }
+                    >
+                      {sortedPlatformStreams.map(
+                        (
+                          point
+                        ) => {
+                          const height =
+                            maxPlatformStreams >
+                            0
+                              ? Math.max(
+                                  3,
+                                  (Number(
+                                    point.streams ||
+                                      0
+                                  ) /
+                                    maxPlatformStreams) *
+                                    100
+                                )
+                              : 0;
+
+                          return (
+                            <div
+                              key={
+                                point.date
+                              }
+                              style={
+                                chartColumn
+                              }
+                              title={`${point.date}: ${formatNumber(
+                                point.streams
+                              )}`}
+                            >
+                              <div
+                                style={
+                                  chartValue
+                                }
+                              >
+                                {point.streams >
+                                0
+                                  ? formatCompactNumber(
+                                      point.streams
+                                    )
+                                  : ""}
+                              </div>
+
+                              <div
+                                style={
+                                  chartBarTrack
+                                }
+                              >
+                                <div
+                                  style={{
+                                    ...chartBar,
+                                    height: `${height}%`,
+                                  }}
+                                />
+                              </div>
+
+                              <div
+                                style={
+                                  chartDate
+                                }
+                              >
+                                {formatShortDate(
+                                  point.date
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* TOP TRACKS */}
+
+                <div
+                  style={
+                    platformContentGrid
+                  }
+                >
+                  <div
+                    style={
+                      innerPanel
+                    }
+                  >
+                    <div
+                      style={
+                        innerPanelHeader
+                      }
+                    >
+                      <div>
+                        <h3
+                          style={
+                            chartTitle
+                          }
+                        >
+                          Top Tracks
+                        </h3>
+
+                        <p
+                          style={
+                            panelSubtitle
+                          }
+                        >
+                          TikTok views by
+                          track
+                        </p>
+                      </div>
+
+                      <span
+                        style={
+                          countBadge
+                        }
+                      >
+                        {
+                          platformTracks.length
+                        }{" "}
+                        tracks
+                      </span>
+                    </div>
+
+                    {platformTracks.length ===
+                    0 ? (
+                      <EmptyState text="No track data available." />
+                    ) : (
+                      <div>
+                        {platformTracks.map(
+                          (
+                            track,
+                            index
+                          ) => {
+                            const percent =
+                              platformTotal >
+                              0
+                                ? (Number(
+                                    track.streams ||
+                                      0
+                                  ) /
+                                    platformTotal) *
+                                  100
+                                : 0;
+
+                            return (
+                              <div
+                                key={`${track.isrc}-${index}`}
+                                style={
+                                  platformTrackRow
+                                }
+                              >
+                                <div
+                                  style={
+                                    rankNumber
+                                  }
+                                >
+                                  {index +
+                                    1}
+                                </div>
+
+                                <div
+                                  style={
+                                    artworkWrap
+                                  }
+                                >
+                                  {track.cover ? (
+                                    <img
+                                      src={
+                                        track.cover
+                                      }
+                                      alt={
+                                        track.track
+                                      }
+                                      style={
+                                        artwork
+                                      }
+                                    />
+                                  ) : (
+                                    <div
+                                      style={
+                                        artworkFallback
+                                      }
+                                    >
+                                      ♪
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    minWidth:
+                                      0,
+                                  }}
+                                >
+                                  <div
+                                    style={
+                                      trackTitle
+                                    }
+                                  >
+                                    {track.track ||
+                                      track.title ||
+                                      "Untitled"}
+                                  </div>
+
+                                  <div
+                                    style={
+                                      trackRelease
+                                    }
+                                  >
+                                    {track.release ||
+                                      "-"}
+                                  </div>
+
+                                  <div
+                                    style={
+                                      trackProgress
+                                    }
+                                  >
+                                    <div
+                                      style={{
+                                        ...trackProgressFill,
+                                        width: `${Math.min(
+                                          100,
+                                          percent
+                                        )}%`,
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div
+                                  style={
+                                    trackViews
+                                  }
+                                >
+                                  <strong>
+                                    {formatNumber(
+                                      track.streams
+                                    )}
+                                  </strong>
+
+                                  <span
+                                    style={
+                                      trackViewsLabel
+                                    }
+                                  >
+                                    views
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SOURCES */}
+
+                  <div
+                    style={
+                      innerPanel
+                    }
+                  >
+                    <div
+                      style={
+                        innerPanelHeader
+                      }
+                    >
+                      <div>
+                        <h3
+                          style={
+                            chartTitle
+                          }
+                        >
+                          Traffic
+                          Sources
+                        </h3>
+
+                        <p
+                          style={
+                            panelSubtitle
+                          }
+                        >
+                          Platform source
+                          totals
+                        </p>
+                      </div>
+                    </div>
+
+                    {platformSources.length ===
+                    0 ? (
+                      <EmptyState text="No source data available." />
+                    ) : (
+                      <div
+                        style={
+                          sourceList
+                        }
+                      >
+                        {platformSources.map(
+                          (
+                            source,
+                            index
+                          ) => (
+                            <div
+                              key={`${source.platform_name}-${index}`}
+                              style={
+                                sourceRow
+                              }
+                            >
+                              <div>
+                                <div
+                                  style={
+                                    sourceName
+                                  }
+                                >
+                                  {
+                                    source.platform_name
+                                  }
+                                </div>
+
+                                <div
+                                  style={
+                                    sourceSub
+                                  }
+                                >
+                                  Platform
+                                  source
+                                </div>
+                              </div>
+
+                              <strong
+                                style={
+                                  sourceValue
+                                }
+                              >
+                                {formatNumber(
+                                  source.streams
+                                )}
+                              </strong>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* DSP REVENUE */}
+
+          <section
+            style={panelStyle}
+          >
+            <div
+              style={panelHeader}
+            >
+              <div>
+                <h2
+                  style={
+                    panelTitle
+                  }
+                >
+                  Revenue by
+                  Platform
+                </h2>
+
+                <p
+                  style={
+                    panelSubtitle
+                  }
+                >
+                  Actual channel
+                  earnings reported by
+                  Too Lost
+                </p>
+              </div>
+
+              <span
+                style={countBadge}
+              >
+                {
+                  data.channels
+                    .length
+                }{" "}
+                channels
               </span>
             </div>
 
-            {data.channels.length === 0 ? (
+            {data.channels
+              .length === 0 ? (
               <EmptyState text="No channel revenue available." />
             ) : (
-              <div style={channelGrid}>
+              <div
+                style={
+                  channelGrid
+                }
+              >
                 {data.channels.map(
                   (channel) => (
                     <div
-                      key={channel.name}
-                      style={channelCard}
+                      key={
+                        channel.name
+                      }
+                      style={
+                        channelCard
+                      }
                     >
                       <div
                         style={
@@ -364,7 +1223,9 @@ export default function AdminAnalyticsPage() {
                               channel.logo ||
                               ""
                             }
-                            alt={channel.name}
+                            alt={
+                              channel.name
+                            }
                             style={
                               channelLogo
                             }
@@ -386,7 +1247,9 @@ export default function AdminAnalyticsPage() {
                             channelName
                           }
                         >
-                          {channel.name}
+                          {
+                            channel.name
+                          }
                         </div>
 
                         <div
@@ -408,20 +1271,36 @@ export default function AdminAnalyticsPage() {
 
           {/* MONTHLY REVENUE */}
 
-          <section style={panelStyle}>
-            <div style={panelHeader}>
+          <section
+            style={panelStyle}
+          >
+            <div
+              style={panelHeader}
+            >
               <div>
-                <h2 style={panelTitle}>
-                  Historical Revenue
+                <h2
+                  style={
+                    panelTitle
+                  }
+                >
+                  Historical
+                  Revenue
                 </h2>
 
-                <p style={panelSubtitle}>
-                  Previous Too Lost sales
-                  reporting periods
+                <p
+                  style={
+                    panelSubtitle
+                  }
+                >
+                  Previous Too Lost
+                  sales reporting
+                  periods
                 </p>
               </div>
 
-              <span style={countBadge}>
+              <span
+                style={countBadge}
+              >
                 {
                   data.monthlyRevenue
                     .length
@@ -430,8 +1309,8 @@ export default function AdminAnalyticsPage() {
               </span>
             </div>
 
-            {data.monthlyRevenue.length ===
-            0 ? (
+            {data.monthlyRevenue
+              .length === 0 ? (
               <EmptyState text="No historical reports found." />
             ) : (
               <div
@@ -453,7 +1332,9 @@ export default function AdminAnalyticsPage() {
 
                     return (
                       <div
-                        key={item.date}
+                        key={
+                          item.date
+                        }
                         style={
                           revenueRow
                         }
@@ -498,40 +1379,59 @@ export default function AdminAnalyticsPage() {
             )}
           </section>
 
-          {/* TOP TRACKS */}
+          {/* GENERAL TRACK ANALYTICS */}
 
-          <section style={panelStyle}>
-            <div style={panelHeader}>
+          <section
+            style={panelStyle}
+          >
+            <div
+              style={panelHeader}
+            >
               <div>
-                <h2 style={panelTitle}>
+                <h2
+                  style={
+                    panelTitle
+                  }
+                >
                   Track Analytics
                 </h2>
 
-                <p style={panelSubtitle}>
-                  Streams, saves, skips and
-                  engagement
+                <p
+                  style={
+                    panelSubtitle
+                  }
+                >
+                  Streams, saves,
+                  skips and engagement
                 </p>
               </div>
 
-              <span style={countBadge}>
-                {periodLabel(period)}
+              <span
+                style={countBadge}
+              >
+                {periodLabel(
+                  period
+                )}
               </span>
             </div>
 
-            {data.topTracks.length ===
-            0 ? (
-              <div style={emptyBox}>
+            {data.topTracks
+              .length === 0 ? (
+              <div
+                style={emptyBox}
+              >
                 <div
                   style={{
-                    fontSize: "32px",
+                    fontSize:
+                      "32px",
                   }}
                 >
                   ♫
                 </div>
 
                 <h3>
-                  No track analytics for
-                  this period
+                  No track analytics
+                  for this period
                 </h3>
 
                 <p>
@@ -539,57 +1439,72 @@ export default function AdminAnalyticsPage() {
                   <strong>
                     All Time
                   </strong>{" "}
-                  to check older Too Lost
-                  analytics data.
+                  to check older Too
+                  Lost analytics
+                  data.
                 </p>
               </div>
             ) : (
-              <div style={tableWrap}>
+              <div
+                style={tableWrap}
+              >
                 <table
-                  style={
-                    tableStyle
-                  }
+                  style={tableStyle}
                 >
                   <thead>
                     <tr>
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Track
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Release
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         ISRC
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Streams
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Saves
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Skips
                       </th>
 
                       <th
-                        style={thStyle}
+                        style={
+                          thStyle
+                        }
                       >
                         Engagement
                       </th>
@@ -683,7 +1598,9 @@ export default function AdminAnalyticsPage() {
 
           {/* API STATUS */}
 
-          <section style={statusPanel}>
+          <section
+            style={statusPanel}
+          >
             <div>
               <strong>
                 Too Lost API Status
@@ -723,6 +1640,10 @@ export default function AdminAnalyticsPage() {
   );
 }
 
+/* ====================================
+   COMPONENTS
+==================================== */
+
 function StatCard({
   title,
   value,
@@ -761,6 +1682,10 @@ function EmptyState({
   );
 }
 
+/* ====================================
+   FORMATTERS
+==================================== */
+
 function formatMoney(
   value: number
 ) {
@@ -780,6 +1705,18 @@ function formatNumber(
 ) {
   return new Intl.NumberFormat(
     "en-US"
+  ).format(value || 0);
+}
+
+function formatCompactNumber(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }
   ).format(value || 0);
 }
 
@@ -806,6 +1743,29 @@ function formatMonth(
   );
 }
 
+function formatShortDate(
+  value: string
+) {
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleDateString(
+    "en-US",
+    {
+      month: "short",
+      day: "numeric",
+    }
+  );
+}
+
 function periodLabel(
   period: Period
 ) {
@@ -817,9 +1777,9 @@ function periodLabel(
   );
 }
 
-/* ===============================
+/* ====================================
    STYLES
-================================ */
+==================================== */
 
 const pageStyle: React.CSSProperties = {
   minHeight: "100vh",
@@ -942,8 +1902,7 @@ const panelTitle: React.CSSProperties = {
 };
 
 const panelSubtitle: React.CSSProperties = {
-  margin:
-    "5px 0 0 0",
+  margin: "5px 0 0",
   color: "#64748b",
   fontSize: "12px",
 };
@@ -1046,8 +2005,7 @@ const tableWrap: React.CSSProperties = {
 
 const tableStyle: React.CSSProperties = {
   width: "100%",
-  borderCollapse:
-    "collapse",
+  borderCollapse: "collapse",
 };
 
 const thStyle: React.CSSProperties = {
@@ -1115,4 +2073,292 @@ const warningBadge: React.CSSProperties = {
   padding: "8px 11px",
   borderRadius: "8px",
   fontSize: "12px",
+};
+
+/* PLATFORM STYLES */
+
+const platformPanel: React.CSSProperties = {
+  marginTop: "22px",
+  border:
+    "1px solid #17334a",
+  background:
+    "linear-gradient(180deg,#081523,#091321)",
+  borderRadius: "16px",
+  padding: "20px",
+};
+
+const platformHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent:
+    "space-between",
+  gap: "20px",
+  paddingBottom: "18px",
+  borderBottom:
+    "1px solid #183047",
+};
+
+const platformBadge: React.CSSProperties = {
+  display: "inline-block",
+  color: "#38bdf8",
+  fontSize: "10px",
+  fontWeight: 800,
+  letterSpacing: ".08em",
+};
+
+const platformTitle: React.CSSProperties = {
+  margin: "7px 0 0",
+  fontSize: "21px",
+};
+
+const platformStatusWrap: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+};
+
+const connectedBadge: React.CSSProperties = {
+  color: "#34d399",
+  background:
+    "rgba(6,78,59,.4)",
+  border:
+    "1px solid rgba(16,185,129,.22)",
+  borderRadius: "20px",
+  padding: "7px 11px",
+  fontSize: "11px",
+  fontWeight: 700,
+};
+
+const platformStatsGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit,minmax(180px,1fr))",
+  gap: "12px",
+  marginTop: "18px",
+};
+
+const platformStatCard: React.CSSProperties = {
+  background: "#07101c",
+  border:
+    "1px solid #193149",
+  borderRadius: "12px",
+  padding: "18px",
+};
+
+const platformStatLabel: React.CSSProperties = {
+  color: "#7f94aa",
+  fontSize: "11px",
+};
+
+const platformBigValue: React.CSSProperties = {
+  fontSize: "28px",
+  fontWeight: 800,
+  marginTop: "7px",
+};
+
+const chartSection: React.CSSProperties = {
+  marginTop: "18px",
+  background: "#07101c",
+  border:
+    "1px solid #193149",
+  borderRadius: "13px",
+  padding: "18px",
+};
+
+const chartHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+};
+
+const chartTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: "15px",
+};
+
+const chartArea: React.CSSProperties = {
+  height: "260px",
+  display: "flex",
+  alignItems: "stretch",
+  gap: "5px",
+  marginTop: "28px",
+  overflowX: "auto",
+  paddingBottom: "6px",
+};
+
+const chartColumn: React.CSSProperties = {
+  minWidth: "35px",
+  flex: "1 0 35px",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+};
+
+const chartValue: React.CSSProperties = {
+  height: "20px",
+  color: "#7890a6",
+  fontSize: "9px",
+};
+
+const chartBarTrack: React.CSSProperties = {
+  flex: 1,
+  width: "13px",
+  display: "flex",
+  alignItems: "flex-end",
+  background:
+    "rgba(30,41,59,.25)",
+  borderRadius: "5px",
+  overflow: "hidden",
+};
+
+const chartBar: React.CSSProperties = {
+  width: "100%",
+  minHeight: "2px",
+  background:
+    "linear-gradient(180deg,#38bdf8,#2563eb)",
+  borderRadius: "5px",
+};
+
+const chartDate: React.CSSProperties = {
+  color: "#64748b",
+  fontSize: "8px",
+  marginTop: "7px",
+  whiteSpace: "nowrap",
+};
+
+const platformContentGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "minmax(0,2fr) minmax(260px,1fr)",
+  gap: "14px",
+  marginTop: "18px",
+};
+
+const innerPanel: React.CSSProperties = {
+  border:
+    "1px solid #193149",
+  background: "#07101c",
+  borderRadius: "13px",
+  overflow: "hidden",
+};
+
+const innerPanelHeader: React.CSSProperties = {
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+  gap: "10px",
+  padding: "17px",
+  borderBottom:
+    "1px solid #17283b",
+};
+
+const platformTrackRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "14px 16px",
+  borderBottom:
+    "1px solid #132335",
+};
+
+const rankNumber: React.CSSProperties = {
+  width: "22px",
+  color: "#64748b",
+  fontSize: "11px",
+};
+
+const artworkWrap: React.CSSProperties = {
+  width: "46px",
+  height: "46px",
+  flex: "0 0 46px",
+};
+
+const artwork: React.CSSProperties = {
+  width: "46px",
+  height: "46px",
+  borderRadius: "8px",
+  objectFit: "cover",
+};
+
+const artworkFallback: React.CSSProperties = {
+  width: "46px",
+  height: "46px",
+  borderRadius: "8px",
+  background: "#152538",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const trackTitle: React.CSSProperties = {
+  color: "#e2e8f0",
+  fontSize: "12px",
+  fontWeight: 700,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const trackRelease: React.CSSProperties = {
+  color: "#64748b",
+  fontSize: "10px",
+  marginTop: "3px",
+};
+
+const trackProgress: React.CSSProperties = {
+  height: "4px",
+  background: "#16283a",
+  borderRadius: "10px",
+  marginTop: "8px",
+  overflow: "hidden",
+};
+
+const trackProgressFill: React.CSSProperties = {
+  height: "100%",
+  background: "#38bdf8",
+  borderRadius: "10px",
+};
+
+const trackViews: React.CSSProperties = {
+  textAlign: "right",
+  minWidth: "70px",
+  fontSize: "12px",
+};
+
+const trackViewsLabel: React.CSSProperties = {
+  display: "block",
+  color: "#64748b",
+  fontSize: "9px",
+  marginTop: "3px",
+};
+
+const sourceList: React.CSSProperties = {
+  padding: "8px 16px",
+};
+
+const sourceRow: React.CSSProperties = {
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+  padding: "14px 0",
+  borderBottom:
+    "1px solid #152537",
+};
+
+const sourceName: React.CSSProperties = {
+  fontWeight: 700,
+  fontSize: "12px",
+};
+
+const sourceSub: React.CSSProperties = {
+  color: "#64748b",
+  fontSize: "9px",
+  marginTop: "3px",
+};
+
+const sourceValue: React.CSSProperties = {
+  color: "#38bdf8",
+  fontSize: "14px",
 };
