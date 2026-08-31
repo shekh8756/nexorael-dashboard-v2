@@ -1501,9 +1501,15 @@ export default function NewReleasePage() {
         throw releaseError;
       }
 
-      /*
+            /*
        * =========================================
-       * UPLOAD TRACKS DIRECTLY TO TOO LOST
+       * UPLOAD TRACKS
+       *
+       * WAV
+       * -> browser FLAC conversion
+       * -> Supabase release-audio
+       * -> Nexorael server
+       * -> Too Lost storage
        * =========================================
        */
 
@@ -1534,142 +1540,168 @@ export default function NewReleasePage() {
          */
 
         const requestedIsrc =
-  track.auto_isrc
-    ? ""
-    : track.isrc.trim();
-
-/*
- * =========================================
- * WAV -> FLAC
- * =========================================
- */
-
-alert(
-  `Converting track ${
-    i + 1
-  } of ${
-    normalizedTracks.length
-  } from WAV to FLAC...`
-);
-
-const flacFile =
-  await convertWavToFlac(
-    track.audio
-  );
-
-console.log(
-  "FLAC conversion complete:",
-  {
-    originalName:
-      track.audio.name,
-
-    originalSize:
-      track.audio.size,
-
-    flacName:
-      flacFile.name,
-
-    flacSize:
-      flacFile.size,
-
-    type:
-      flacFile.type,
-  }
-);
-
-alert(
-  `Uploading track ${
-    i + 1
-  } of ${
-    normalizedTracks.length
-  } directly to Too Lost...`
-);
+          track.auto_isrc
+            ? ""
+            : track.isrc.trim();
 
         /*
          * =========================================
-         * 1. GET TOO LOST PRESIGNED UPLOAD URL
+         * 1. WAV -> FLAC
          * =========================================
          */
 
-        const uploadUrlResponse =
+        alert(
+          `Converting track ${
+            i + 1
+          } of ${
+            normalizedTracks.length
+          } from WAV to FLAC...`
+        );
+
+        const flacFile =
+          await convertWavToFlac(
+            track.audio
+          );
+
+        console.log(
+          "FLAC conversion complete:",
+          {
+            originalName:
+              track.audio.name,
+
+            originalSize:
+              track.audio.size,
+
+            flacName:
+              flacFile.name,
+
+            flacSize:
+              flacFile.size,
+
+            type:
+              flacFile.type,
+          }
+        );
+
+        /*
+         * =========================================
+         * 2. FLAC -> SUPABASE
+         * =========================================
+         */
+
+        alert(
+          `Uploading track ${
+            i + 1
+          } of ${
+            normalizedTracks.length
+          } to storage...`
+        );
+
+        const audioUrl =
+          await uploadFile(
+            "release-audio",
+            flacFile
+          );
+
+        if (!audioUrl) {
+          throw new Error(
+            `Track ${
+              i + 1
+            } Supabase upload failed.`
+          );
+        }
+
+        console.log(
+          "Supabase audio upload complete:",
+          {
+            audioUrl,
+            size:
+              flacFile.size,
+          }
+        );
+
+        /*
+         * =========================================
+         * 3. SUPABASE -> SERVER -> TOO LOST
+         * =========================================
+         */
+
+        alert(
+          `Sending track ${
+            i + 1
+          } of ${
+            normalizedTracks.length
+          } to Too Lost...`
+        );
+
+        const serverUploadResponse =
           await fetch(
-            "/api/toolost/upload-url",
+            "/api/toolost/upload-from-url",
             {
-              method: "POST",
+              method:
+                "POST",
 
               headers: {
                 "Content-Type":
                   "application/json",
               },
 
-              body: JSON.stringify({
-  releaseId:
-    tooLostReleaseId,
+              body:
+                JSON.stringify({
+                  releaseId:
+                    tooLostReleaseId,
 
-  fileName:
-    flacFile.name,
+                  sourceUrl:
+                    audioUrl,
 
-  contentType:
-    "audio/flac",
-}),
+                  fileName:
+                    flacFile.name,
+                }),
             }
           );
 
-        const uploadUrlText =
-          await uploadUrlResponse.text();
+        const serverUploadText =
+          await serverUploadResponse.text();
 
-        let uploadUrlData: any;
+        let serverUploadData: any;
 
         try {
-          uploadUrlData =
+          serverUploadData =
             JSON.parse(
-              uploadUrlText
+              serverUploadText
             );
         } catch {
           throw new Error(
-            `Too Lost upload-url returned non-JSON (${uploadUrlResponse.status}).`
+            `Audio transfer API returned non-JSON (${serverUploadResponse.status}).`
           );
         }
 
         if (
-  !uploadUrlResponse.ok ||
-  !uploadUrlData?.success
-) {
-  console.error(
-    "Too Lost upload-url error:",
-    uploadUrlData
-  );
-
-  const rawTooLostError =
-    uploadUrlData
-      ?.tooLostResponse
-      ? JSON.stringify(
-          uploadUrlData.tooLostResponse,
-          null,
-          2
-        )
-      : "";
-
-  throw new Error(
-    `${
-      uploadUrlData?.error ||
-      `Unable to prepare track ${
-        i + 1
-      } upload.`
-    }${
-      rawTooLostError
-        ? `\n\nToo Lost Response:\n${rawTooLostError}`
-        : ""
-    }`
-  );
-}
-
-        if (
-          !uploadUrlData.uploadUrl ||
-          !uploadUrlData.fileKey
+          !serverUploadResponse.ok ||
+          !serverUploadData?.success
         ) {
+          console.error(
+            "Supabase -> Too Lost transfer error:",
+            serverUploadData
+          );
+
           throw new Error(
-            `Too Lost upload URL or fileKey missing for track ${
+            serverUploadData?.error ||
+              serverUploadData
+                ?.tooLostResponse
+                ?.message ||
+              `Track ${
+                i + 1
+              } could not be transferred to Too Lost.`
+          );
+        }
+
+        const tooLostFileKey =
+          serverUploadData.fileKey;
+
+        if (!tooLostFileKey) {
+          throw new Error(
+            `Too Lost fileKey missing for track ${
               i + 1
             }.`
           );
@@ -1677,93 +1709,7 @@ alert(
 
         /*
          * =========================================
-         * 2. DIRECT BROWSER -> TOO LOST STORAGE
-         *
-         * AUDIO DOES NOT GO TO SUPABASE.
-         * =========================================
-         */
-
-        const directHeaders: Record<
-          string,
-          string
-        > = {};
-
-        if (
-          uploadUrlData.headers &&
-          typeof uploadUrlData.headers ===
-            "object"
-        ) {
-          for (
-            const [
-              key,
-              value,
-            ] of Object.entries(
-              uploadUrlData.headers
-            )
-          ) {
-            if (
-              typeof value ===
-              "string"
-            ) {
-              directHeaders[key] =
-                value;
-            }
-          }
-        }
-
-        const hasContentType =
-          Object.keys(
-            directHeaders
-          ).some(
-            (key) =>
-              key.toLowerCase() ===
-              "content-type"
-          );
-
-        if (!hasContentType) {
-          directHeaders[
-  "Content-Type"
-] = "audio/flac";
-        }
-
-        const directUploadResponse =
-          await fetch(
-            uploadUrlData.uploadUrl,
-            {
-              method:
-                uploadUrlData.method ||
-                "PUT",
-
-              headers:
-                directHeaders,
-
-              body:
-  flacFile,
-            }
-          );
-
-        if (
-          !directUploadResponse.ok
-        ) {
-          const directUploadText =
-            await directUploadResponse.text();
-
-          console.error(
-            "Too Lost direct audio upload failed:",
-            directUploadResponse.status,
-            directUploadText
-          );
-
-          throw new Error(
-            `Track ${
-              i + 1
-            } direct audio upload failed (${directUploadResponse.status}).`
-          );
-        }
-
-        /*
-         * =========================================
-         * 3. ATTACH FILE KEY TO TOO LOST TRACK
+         * 4. ATTACH FILE TO TOO LOST TRACK
          * =========================================
          */
 
@@ -1771,26 +1717,28 @@ alert(
           await fetch(
             "/api/toolost/finalize-track",
             {
-              method: "POST",
+              method:
+                "POST",
 
               headers: {
                 "Content-Type":
                   "application/json",
               },
 
-              body: JSON.stringify({
-                releaseId:
-                  tooLostReleaseId,
+              body:
+                JSON.stringify({
+                  releaseId:
+                    tooLostReleaseId,
 
-                title:
-                  track.title.trim(),
+                  title:
+                    track.title.trim(),
 
-                fileKey:
-                  uploadUrlData.fileKey,
+                  fileKey:
+                    tooLostFileKey,
 
-                trackNumber:
-                  i + 1,
-              }),
+                  trackNumber:
+                    i + 1,
+                }),
             }
           );
 
@@ -1814,9 +1762,15 @@ alert(
           !finalizeResponse.ok ||
           !finalizeData?.success
         ) {
+          console.error(
+            "Too Lost finalize-track error:",
+            finalizeData
+          );
+
           throw new Error(
             finalizeData?.error ||
-              finalizeData?.data
+              finalizeData
+                ?.data
                 ?.message ||
               `Unable to attach audio for track ${
                 i + 1
@@ -1827,9 +1781,6 @@ alert(
         /*
          * =========================================
          * ISRC
-         *
-         * If Too Lost returns an ISRC use it.
-         * Otherwise keep manually supplied ISRC.
          * =========================================
          */
 
@@ -1841,9 +1792,7 @@ alert(
 
         /*
          * =========================================
-         * SAVE TRACK METADATA TO SUPABASE
-         *
-         * Audio binary is NOT stored in Supabase.
+         * SAVE TRACK TO SUPABASE DATABASE
          * =========================================
          */
 
@@ -1877,10 +1826,10 @@ alert(
                   : null,
 
               /*
-               * No Supabase audio object.
+               * Supabase public FLAC URL.
                */
               audio_url:
-                null,
+                audioUrl,
 
               track_number:
                 i + 1,
@@ -1910,7 +1859,7 @@ alert(
                 track.content_type,
 
               toolost_file_key:
-                uploadUrlData.fileKey,
+                tooLostFileKey,
             });
 
         if (trackError) {
