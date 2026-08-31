@@ -1594,16 +1594,37 @@ export default function NewReleasePage() {
         }
 
         if (
-          !uploadUrlResponse.ok ||
-          !uploadUrlData?.success
-        ) {
-          throw new Error(
-            uploadUrlData?.error ||
-              `Unable to prepare track ${
-                i + 1
-              } upload.`
-          );
-        }
+  !uploadUrlResponse.ok ||
+  !uploadUrlData?.success
+) {
+  console.error(
+    "Too Lost upload-url error:",
+    uploadUrlData
+  );
+
+  const rawTooLostError =
+    uploadUrlData
+      ?.tooLostResponse
+      ? JSON.stringify(
+          uploadUrlData.tooLostResponse,
+          null,
+          2
+        )
+      : "";
+
+  throw new Error(
+    `${
+      uploadUrlData?.error ||
+      `Unable to prepare track ${
+        i + 1
+      } upload.`
+    }${
+      rawTooLostError
+        ? `\n\nToo Lost Response:\n${rawTooLostError}`
+        : ""
+    }`
+  );
+}
 
         if (
           !uploadUrlData.uploadUrl ||

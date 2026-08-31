@@ -17,40 +17,65 @@ function findUploadData(value: any): {
 
   const uploadUrl =
     value.uploadUrl ??
+    value.uploadURL ??
     value.upload_url ??
     value.url ??
     value.signedUrl ??
-    value.signed_url;
+    value.signedURL ??
+    value.signed_url ??
+    value.presignedUrl ??
+    value.presignedURL ??
+    value.presigned_url ??
+    value.putUrl ??
+    value.putURL ??
+    value.put_url;
 
   const fileKey =
     value.fileKey ??
     value.file_key ??
-    value.key;
+    value.key ??
+    value.objectKey ??
+    value.object_key ??
+    value.filePath ??
+    value.file_path ??
+    value.path;
 
   if (uploadUrl || fileKey) {
     return {
-      uploadUrl,
-      fileKey,
+      uploadUrl:
+        uploadUrl
+          ? String(uploadUrl)
+          : undefined,
+
+      fileKey:
+        fileKey
+          ? String(fileKey)
+          : undefined,
+
       method:
         value.method ??
         value.httpMethod ??
-        value.http_method,
+        value.http_method ??
+        "PUT",
+
       headers:
         value.headers ??
         value.uploadHeaders ??
-        value.upload_headers,
+        value.upload_headers ??
+        {},
     };
   }
 
-  for (const key of [
-    "data",
-    "result",
-    "upload",
-    "file",
-    "payload",
-  ]) {
-    if (value[key]) {
-      const found = findUploadData(value[key]);
+  for (const key of Object.keys(value)) {
+    const child =
+      value[key];
+
+    if (
+      child &&
+      typeof child === "object"
+    ) {
+      const found =
+        findUploadData(child);
 
       if (
         found.uploadUrl ||
@@ -69,7 +94,7 @@ export async function POST(
 ) {
   try {
     const accessToken =
-  await getTooLostMasterAccessToken();
+      await getTooLostMasterAccessToken();
 
     const body =
       await request.json();
@@ -102,21 +127,35 @@ export async function POST(
       );
     }
 
+    console.log(
+      "Requesting Too Lost upload URL:",
+      {
+        releaseId,
+        fileName,
+        contentType,
+      }
+    );
+
     const result =
       await tooLostApi(
         accessToken,
         `/releases/${releaseId}/tracks/upload-url`,
         {
           method: "POST",
+
           headers: {
             "Content-Type":
               "application/json",
+
             Accept:
               "application/json",
           },
+
           body: JSON.stringify({
             kind: "audio",
+
             fileName,
+
             contentType:
               contentType ||
               "audio/wav",
@@ -124,33 +163,33 @@ export async function POST(
         }
       );
 
-    const upload =
-      findUploadData(
-        result.data
-      );
-
     console.log(
-      "Too Lost upload URL status:",
+      "Too Lost upload-url HTTP status:",
       result.response.status
     );
 
     console.log(
-      "Too Lost upload URL raw response:",
-      result.data
+      "Too Lost upload-url RAW response:",
+      JSON.stringify(
+        result.data,
+        null,
+        2
+      )
     );
 
-    console.log(
-      "Too Lost normalized upload:",
-      upload
-    );
+    /*
+     * If Too Lost itself rejected request,
+     * return their real response instead of
+     * hiding it behind generic error.
+     */
+    if (!result.response.ok) {
+      const tooLostData =
+        result.data as any;
 
-    if (
-      !upload.uploadUrl ||
-      !upload.fileKey
-    ) {
       return NextResponse.json(
         {
           success: false,
+
           step:
             "create_upload_url",
 
@@ -158,14 +197,70 @@ export async function POST(
             result.response.status,
 
           error:
-            "Too Lost did not return a usable upload URL/file key.",
+            tooLostData?.message ||
+            tooLostData?.error ||
+            tooLostData?.detail ||
+            `Too Lost rejected upload-url request (${result.response.status}).`,
 
           tooLostResponse:
             result.data,
         },
         {
-          status: 502,
+          status:
+            result.response.status,
         }
+      );
+    }
+
+    const upload =
+      findUploadData(
+        result.data
+      );
+
+    console.log(
+      "Normalized Too Lost upload data:",
+      upload
+    );
+
+    if (!upload.uploadUrl) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "create_upload_url",
+
+          status:
+            result.response.status,
+
+          error:
+            "Too Lost response did not contain an upload URL.",
+
+          tooLostResponse:
+            result.data,
+        },
+        { status: 502 }
+      );
+    }
+
+    if (!upload.fileKey) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "create_upload_url",
+
+          status:
+            result.response.status,
+
+          error:
+            "Too Lost returned an upload URL but no fileKey.",
+
+          tooLostResponse:
+            result.data,
+        },
+        { status: 502 }
       );
     }
 
@@ -186,9 +281,6 @@ export async function POST(
 
       headers:
         upload.headers || {},
-
-      raw:
-        result.data,
     });
   } catch (error) {
     console.error(
@@ -199,6 +291,7 @@ export async function POST(
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
