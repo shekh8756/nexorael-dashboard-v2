@@ -6,21 +6,40 @@ const TOOLOST_TOKEN_URL =
   process.env.TOOLOST_TOKEN_URL ||
   "https://sandbox.toolost.com/oauth/token";
 
+export type TooLostTokenData = {
+  access_token: string;
+  token_type?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  scope?: string;
+};
+
 export function getTooLostConfig() {
-  const clientId = process.env.TOOLOST_CLIENT_ID;
-  const clientSecret = process.env.TOOLOST_CLIENT_SECRET;
-  const redirectUri = process.env.TOOLOST_REDIRECT_URI;
+  const clientId =
+    process.env.TOOLOST_CLIENT_ID;
+
+  const clientSecret =
+    process.env.TOOLOST_CLIENT_SECRET;
+
+  const redirectUri =
+    process.env.TOOLOST_REDIRECT_URI;
 
   if (!clientId) {
-    throw new Error("TOOLOST_CLIENT_ID is missing");
+    throw new Error(
+      "TOOLOST_CLIENT_ID is missing"
+    );
   }
 
   if (!clientSecret) {
-    throw new Error("TOOLOST_CLIENT_SECRET is missing");
+    throw new Error(
+      "TOOLOST_CLIENT_SECRET is missing"
+    );
   }
 
   if (!redirectUri) {
-    throw new Error("TOOLOST_REDIRECT_URI is missing");
+    throw new Error(
+      "TOOLOST_REDIRECT_URI is missing"
+    );
   }
 
   return {
@@ -32,37 +51,136 @@ export function getTooLostConfig() {
   };
 }
 
+/* =========================================
+   AUTHORIZATION CODE → TOKEN
+========================================= */
+
 export async function exchangeTooLostCode(
   code: string,
   codeVerifier: string
-) {
-  const config = getTooLostConfig();
+): Promise<TooLostTokenData> {
+  const config =
+    getTooLostConfig();
 
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: config.redirectUri,
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    code_verifier: codeVerifier,
-  });
+  const body =
+    new URLSearchParams({
+      grant_type:
+        "authorization_code",
 
-  const response = await fetch(config.tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
-    body: body.toString(),
-    cache: "no-store",
-  });
+      code,
 
-  const text = await response.text();
+      redirect_uri:
+        config.redirectUri,
 
-  let data: unknown;
+      client_id:
+        config.clientId,
+
+      client_secret:
+        config.clientSecret,
+
+      code_verifier:
+        codeVerifier,
+    });
+
+  const response =
+    await fetch(
+      config.tokenUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+
+          Accept:
+            "application/json",
+        },
+
+        body:
+          body.toString(),
+
+        cache:
+          "no-store",
+      }
+    );
+
+  return parseTokenResponse(
+    response,
+    "Too Lost token exchange"
+  );
+}
+
+/* =========================================
+   REFRESH TOKEN → NEW ACCESS TOKEN
+========================================= */
+
+export async function refreshTooLostAccessToken(
+  refreshToken: string
+): Promise<TooLostTokenData> {
+  const config =
+    getTooLostConfig();
+
+  const body =
+    new URLSearchParams({
+      grant_type:
+        "refresh_token",
+
+      refresh_token:
+        refreshToken,
+
+      client_id:
+        config.clientId,
+
+      client_secret:
+        config.clientSecret,
+    });
+
+  const response =
+    await fetch(
+      config.tokenUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+
+          Accept:
+            "application/json",
+        },
+
+        body:
+          body.toString(),
+
+        cache:
+          "no-store",
+      }
+    );
+
+  return parseTokenResponse(
+    response,
+    "Too Lost token refresh"
+  );
+}
+
+/* =========================================
+   TOKEN RESPONSE PARSER
+========================================= */
+
+async function parseTokenResponse(
+  response: Response,
+  operation: string
+): Promise<TooLostTokenData> {
+  const text =
+    await response.text();
+
+  let data: any;
 
   try {
-    data = JSON.parse(text);
+    data =
+      text
+        ? JSON.parse(text)
+        : null;
   } catch {
     data = {
       raw: text,
@@ -70,65 +188,96 @@ export async function exchangeTooLostCode(
   }
 
   if (!response.ok) {
-    console.error("Too Lost token exchange failed:", {
-      status: response.status,
-      response: data,
-    });
+    console.error(
+      `${operation} failed:`,
+      {
+        status:
+          response.status,
+
+        response:
+          data,
+      }
+    );
 
     throw new Error(
-      `Too Lost token exchange failed (${response.status})`
+      `${operation} failed (${response.status})`
     );
   }
 
   if (
     !data ||
-    typeof data !== "object" ||
-    !("access_token" in data) ||
-    typeof data.access_token !== "string"
+    typeof data !==
+      "object" ||
+    typeof data.access_token !==
+      "string"
   ) {
     throw new Error(
-      "Too Lost token response did not contain an access token"
+      `${operation} did not return an access token`
     );
   }
 
-  return data as {
-    access_token: string;
-    token_type?: string;
-    expires_in?: number;
-    refresh_token?: string;
-    scope?: string;
-  };
+  return data as TooLostTokenData;
 }
+
+/* =========================================
+   TOO LOST API
+========================================= */
 
 export async function tooLostApi(
   accessToken: string,
   path: string,
   options: RequestInit = {}
 ) {
-  const config = getTooLostConfig();
+  const config =
+    getTooLostConfig();
 
-  const url = `${config.apiUrl.replace(/\/$/, "")}/${path.replace(
-    /^\//,
-    ""
-  )}`;
+  const url =
+    `${config.apiUrl.replace(
+      /\/$/,
+      ""
+    )}/${path.replace(
+      /^\//,
+      ""
+    )}`;
 
-  const headers = new Headers(options.headers);
+  const headers =
+    new Headers(
+      options.headers
+    );
 
-  headers.set("Authorization", `Bearer ${accessToken}`);
-  headers.set("Accept", "application/json");
+  headers.set(
+    "Authorization",
+    `Bearer ${accessToken}`
+  );
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-    cache: "no-store",
-  });
+  headers.set(
+    "Accept",
+    "application/json"
+  );
 
-  const text = await response.text();
+  const response =
+    await fetch(
+      url,
+      {
+        ...options,
+
+        headers,
+
+        cache:
+          "no-store",
+      }
+    );
+
+  const text =
+    await response.text();
 
   let data: unknown;
 
   try {
-    data = text ? JSON.parse(text) : null;
+    data =
+      text
+        ? JSON.parse(text)
+        : null;
   } catch {
     data = {
       raw: text,

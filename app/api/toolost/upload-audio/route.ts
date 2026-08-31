@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
 import { tooLostApi } from "@/lib/toolost";
 import ffmpegPath from "ffmpeg-static";
 import { spawn } from "child_process";
@@ -415,26 +415,8 @@ export async function POST(
        1. ACCESS TOKEN
     ======================================================= */
 
-    const cookieStore =
-      await cookies();
-
     const accessToken =
-      cookieStore.get(
-        "toolost_access_token"
-      )?.value;
-
-    if (!accessToken) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Too Lost is not connected.",
-        },
-        {
-          status: 401,
-        }
-      );
-    }
+  await getTooLostMasterAccessToken();
 
     /* =======================================================
        2. REQUEST BODY

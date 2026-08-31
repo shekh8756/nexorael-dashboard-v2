@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
 import { tooLostApi } from "@/lib/toolost";
 
 export const runtime = "nodejs";
@@ -7,20 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const cookieStore = await cookies();
-
     const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
-
-    if (!accessToken) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Too Lost is not connected",
-        },
-        { status: 401 }
-      );
-    }
+  await getTooLostMasterAccessToken();
 
     const body = await request.json();
 

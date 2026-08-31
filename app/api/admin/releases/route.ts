@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { tooLostApi } from "@/lib/toolost";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function getAccessToken() {
-  const cookieStore = await cookies();
-
-  return cookieStore.get(
-    "toolost_access_token"
-  )?.value;
+  return await getTooLostMasterAccessToken();
 }
 
 function mapTooLostStatus(

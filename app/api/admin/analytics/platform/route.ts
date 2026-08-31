@@ -4,8 +4,8 @@ import {
 } from "next/server";
 
 import {
-  cookies,
-} from "next/headers";
+  getTooLostMasterAccessToken,
+} from "@/lib/toolost-master";
 
 import {
   tooLostApi,
@@ -15,12 +15,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function getAccessToken() {
-  const cookieStore =
-    await cookies();
-
-  return cookieStore.get(
-    "toolost_access_token"
-  )?.value;
+  return await getTooLostMasterAccessToken();
 }
 
 async function callTooLost(
@@ -267,22 +262,7 @@ export async function GET(
       "";
 
     const accessToken =
-      await getAccessToken();
-
-    if (
-      !accessToken
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Too Lost is not connected.",
-        },
-        {
-          status: 401,
-        }
-      );
-    }
+  await getAccessToken();
 
     /* =====================================
        LOAD ANALYTICS PLATFORMS

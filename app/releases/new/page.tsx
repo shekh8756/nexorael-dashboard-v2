@@ -966,48 +966,6 @@ export default function NewReleasePage() {
 
       /*
        * =========================================
-       * TOO LOST CONNECTION
-       * =========================================
-       */
-
-      const meResponse =
-        await fetch(
-          "/api/toolost/me",
-          {
-            method:
-              "GET",
-            cache:
-              "no-store",
-          }
-        );
-
-      const meText =
-        await meResponse.text();
-
-      let meData: any;
-
-      try {
-        meData =
-          JSON.parse(
-            meText
-          );
-      } catch {
-        throw new Error(
-          `Too Lost connection check returned non-JSON (${meResponse.status}).`
-        );
-      }
-
-      if (
-        !meResponse.ok ||
-        !meData.connected
-      ) {
-        throw new Error(
-          "Too Lost is not connected. Please connect Too Lost first."
-        );
-      }
-
-      /*
-       * =========================================
        * NORMALIZE TRACK LANGUAGE
        *
        * Every track gets the same language

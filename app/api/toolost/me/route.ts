@@ -1,23 +1,16 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { tooLostApi } from "@/lib/toolost";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const cookieStore = await cookies();
-
+    // Nexorael's central Too Lost connection.
+    // No browser/user Too Lost cookie is required.
     const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
-
-    if (!accessToken) {
-      return NextResponse.json(
-        {
-          connected: false,
-          error: "Too Lost is not connected",
-        },
-        { status: 401 }
-      );
-    }
+      await getTooLostMasterAccessToken();
 
     const { response, data } = await tooLostApi(
       accessToken,
@@ -26,7 +19,7 @@ export async function GET() {
 
     if (!response.ok) {
       console.error(
-        "Too Lost /me failed:",
+        "Too Lost master /me failed:",
         response.status,
         data
       );
@@ -34,9 +27,9 @@ export async function GET() {
       return NextResponse.json(
         {
           connected: false,
-          error: "Too Lost API rejected the access token",
+          error:
+            "Nexorael distribution service connection could not be verified.",
           status: response.status,
-          details: data,
         },
         { status: response.status }
       );
@@ -48,7 +41,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error(
-      "Too Lost /me error:",
+      "Too Lost master /me error:",
       error
     );
 
@@ -56,11 +49,9 @@ export async function GET() {
       {
         connected: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Too Lost API request failed",
+          "Nexorael distribution service is temporarily unavailable.",
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }

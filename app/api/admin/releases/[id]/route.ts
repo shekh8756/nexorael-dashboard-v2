@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { tooLostApi } from "@/lib/toolost";
 
@@ -47,9 +47,7 @@ function getNewStatus(action: Action) {
 }
 
 async function getAccessToken() {
-  const cookieStore = await cookies();
-
-  return cookieStore.get("toolost_access_token")?.value;
+  return await getTooLostMasterAccessToken();
 }
 
 /**

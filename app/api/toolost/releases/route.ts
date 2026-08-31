@@ -1,24 +1,16 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { tooLostApi } from "@/lib/toolost";
+import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const cookieStore = await cookies();
-
+    // Use Nexorael's central Too Lost connection.
+    // Individual users do not need a Too Lost login/cookie.
     const accessToken =
-      cookieStore.get("toolost_access_token")?.value;
-
-    if (!accessToken) {
-      return NextResponse.json(
-        {
-          success: false,
-          connected: false,
-          error: "Too Lost is not connected",
-        },
-        { status: 401 }
-      );
-    }
+      await getTooLostMasterAccessToken();
 
     const { response, data } = await tooLostApi(
       accessToken,
@@ -28,14 +20,29 @@ export async function GET() {
       }
     );
 
-    return NextResponse.json(
-      {
-        success: response.ok,
-        status: response.status,
-        data,
-      },
-      { status: response.ok ? 200 : response.status }
-    );
+    if (!response.ok) {
+      console.error(
+        "Too Lost releases API failed:",
+        response.status,
+        data
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          status: response.status,
+          error:
+            "Distribution service could not load releases.",
+        },
+        { status: response.status }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      status: response.status,
+      data,
+    });
   } catch (error) {
     console.error(
       "Too Lost releases API error:",
@@ -46,11 +53,9 @@ export async function GET() {
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Too Lost releases request failed",
+          "Distribution service is temporarily unavailable.",
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }
