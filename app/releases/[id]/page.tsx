@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import {
+  useParams,
+  useSearchParams,
+} from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Release = {
@@ -41,20 +44,36 @@ type Delivery = {
 
 export default function ReleaseDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
 
   const releaseId = Array.isArray(params?.id)
     ? params.id[0]
     : params?.id;
 
-  const [release, setRelease] = useState<Release | null>(null);
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const from = searchParams.get("from");
+
+  const backHref =
+    from === "admin"
+      ? "/admin/releases"
+      : "/dashboard";
+
+  const [release, setRelease] =
+    useState<Release | null>(null);
+
+  const [deliveries, setDeliveries] =
+    useState<Delivery[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
     if (!releaseId) return;
 
     loadRelease();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [releaseId]);
 
   async function loadRelease() {
@@ -65,44 +84,51 @@ export default function ReleaseDetailPage() {
       // --------------------------------------------------
       // STEP 1
       // GET RELEASE
-      // IMPORTANT:
-      // No Supabase relationship is used here.
       // --------------------------------------------------
 
-      const { data: releaseData, error: releaseError } =
-        await supabase
-          .from("releases")
-          .select("*")
-          .eq("id", releaseId)
-          .maybeSingle();
+      const {
+        data: releaseData,
+        error: releaseError,
+      } = await supabase
+        .from("releases")
+        .select("*")
+        .eq("id", releaseId)
+        .maybeSingle();
 
       if (releaseError) {
-        throw new Error(releaseError.message);
+        throw new Error(
+          releaseError.message
+        );
       }
 
       if (!releaseData) {
-        throw new Error("Release not found.");
+        throw new Error(
+          "Release not found."
+        );
       }
 
       setRelease(releaseData);
 
       // --------------------------------------------------
       // STEP 2
-      // GET DSP DELIVERIES SEPARATELY
+      // GET DSP DELIVERIES
       // --------------------------------------------------
 
-      const { data: deliveryData, error: deliveryError } =
-        await supabase
-          .from("dsp_deliveries")
-          .select("*")
-          .eq("release_id", releaseId)
-          .order("created_at", {
-            ascending: false,
-          });
+      const {
+        data: deliveryData,
+        error: deliveryError,
+      } = await supabase
+        .from("dsp_deliveries")
+        .select("*")
+        .eq("release_id", releaseId)
+        .order("created_at", {
+          ascending: false,
+        });
 
-      // Delivery table error should NOT break release page.
       if (!deliveryError) {
-        setDeliveries(deliveryData || []);
+        setDeliveries(
+          deliveryData || []
+        );
       } else {
         console.log(
           "DSP delivery query:",
@@ -124,11 +150,15 @@ export default function ReleaseDetailPage() {
     }
   }
 
-  function formatDate(value?: string | null) {
+  function formatDate(
+    value?: string | null
+  ) {
     if (!value) return "—";
 
     try {
-      return new Date(value).toLocaleDateString(
+      return new Date(
+        value
+      ).toLocaleDateString(
         "en-IN",
         {
           day: "2-digit",
@@ -141,8 +171,12 @@ export default function ReleaseDetailPage() {
     }
   }
 
-  function statusClass(status?: string | null) {
-    const value = (status || "").toLowerCase();
+  function statusClass(
+    status?: string | null
+  ) {
+    const value = (
+      status || ""
+    ).toLowerCase();
 
     if (
       value.includes("live") ||
@@ -177,7 +211,7 @@ export default function ReleaseDetailPage() {
       <main className="min-h-screen bg-[#050816] text-white p-6 md:p-10">
         <div className="mx-auto max-w-7xl">
           <Link
-            href="/dashboard"
+            href={backHref}
             className="inline-flex rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
           >
             ← Back
@@ -198,7 +232,7 @@ export default function ReleaseDetailPage() {
       <main className="min-h-screen bg-[#050816] text-white p-6 md:p-10">
         <div className="mx-auto max-w-7xl">
           <Link
-            href="/dashboard"
+            href={backHref}
             className="inline-flex rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
           >
             ← Back
@@ -237,23 +271,25 @@ export default function ReleaseDetailPage() {
   return (
     <main className="min-h-screen bg-[#050816] text-white">
       <div className="mx-auto max-w-7xl p-6 md:p-10">
-
         {/* HEADER */}
+
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <Link
-              href="/dashboard"
+              href={backHref}
               className="inline-flex rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
             >
               ← Back
             </Link>
 
             <h1 className="mt-6 text-3xl font-bold">
-              {release.title || "Untitled Release"}
+              {release.title ||
+                "Untitled Release"}
             </h1>
 
             <p className="mt-2 text-zinc-400">
-              Release details and delivery status
+              Release details and
+              delivery status
             </p>
           </div>
 
@@ -262,20 +298,27 @@ export default function ReleaseDetailPage() {
               release.status
             )}`}
           >
-            {(release.status || "draft").toUpperCase()}
+            {(
+              release.status ||
+              "draft"
+            ).toUpperCase()}
           </div>
         </div>
 
         {/* MAIN RELEASE CARD */}
-        <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
 
+        <div className="mt-8 grid gap-6 lg:grid-cols-[280px_1fr]">
           {/* ARTWORK */}
+
           <div className="rounded-2xl border border-white/10 bg-[#0d1224] p-4">
             <div className="aspect-square overflow-hidden rounded-xl bg-black">
               {cover ? (
                 <img
                   src={cover}
-                  alt={release.title || "Release artwork"}
+                  alt={
+                    release.title ||
+                    "Release artwork"
+                  }
                   className="h-full w-full object-cover"
                 />
               ) : (
@@ -297,14 +340,13 @@ export default function ReleaseDetailPage() {
           </div>
 
           {/* DETAILS */}
-          <div className="rounded-2xl border border-white/10 bg-[#0d1224] p-6">
 
+          <div className="rounded-2xl border border-white/10 bg-[#0d1224] p-6">
             <h2 className="text-xl font-semibold">
               Release Information
             </h2>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-
               <Info
                 label="Title"
                 value={release.title}
@@ -312,7 +354,9 @@ export default function ReleaseDetailPage() {
 
               <Info
                 label="Artist"
-                value={release.artist_name}
+                value={
+                  release.artist_name
+                }
               />
 
               <Info
@@ -337,7 +381,9 @@ export default function ReleaseDetailPage() {
 
               <Info
                 label="Subgenre"
-                value={release.subgenre}
+                value={
+                  release.subgenre
+                }
               />
 
               <Info
@@ -347,7 +393,9 @@ export default function ReleaseDetailPage() {
 
               <Info
                 label="Catalog Number"
-                value={release.catalog_number}
+                value={
+                  release.catalog_number
+                }
               />
 
               <Info
@@ -370,14 +418,13 @@ export default function ReleaseDetailPage() {
                   release.created_at
                 )}
               />
-
             </div>
           </div>
         </div>
 
         {/* DSP DELIVERIES */}
-        <section className="mt-8 rounded-2xl border border-white/10 bg-[#0d1224]">
 
+        <section className="mt-8 rounded-2xl border border-white/10 bg-[#0d1224]">
           <div className="border-b border-white/10 p-6">
             <div className="flex items-center justify-between">
               <div>
@@ -386,7 +433,8 @@ export default function ReleaseDetailPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-zinc-500">
-                  Distribution status for this release
+                  Distribution status
+                  for this release
                 </p>
               </div>
 
@@ -401,50 +449,55 @@ export default function ReleaseDetailPage() {
 
           {deliveries.length === 0 ? (
             <div className="p-8 text-center text-zinc-500">
-              No DSP delivery records found.
+              No DSP delivery records
+              found.
             </div>
           ) : (
             <div className="divide-y divide-white/10">
-              {deliveries.map((delivery) => (
-                <div
-                  key={delivery.id}
-                  className="flex flex-col gap-3 p-6 md:flex-row md:items-center md:justify-between"
-                >
-                  <div>
-                    <p className="font-medium">
-                      {delivery.dsp ||
-                        delivery.platform ||
-                        "DSP"}
-                    </p>
-
-                    <p className="mt-1 text-sm text-zinc-500">
-                      {delivery.created_at
-                        ? formatDate(
-                            delivery.created_at
-                          )
-                        : ""}
-                    </p>
-                  </div>
-
-                  <span
-                    className={`w-fit rounded-full border px-3 py-1 text-xs font-medium ${statusClass(
-                      delivery.status
-                    )}`}
+              {deliveries.map(
+                (delivery) => (
+                  <div
+                    key={
+                      delivery.id
+                    }
+                    className="flex flex-col gap-3 p-6 md:flex-row md:items-center md:justify-between"
                   >
-                    {(
-                      delivery.status ||
-                      "pending"
-                    ).toUpperCase()}
-                  </span>
-                </div>
-              ))}
+                    <div>
+                      <p className="font-medium">
+                        {delivery.dsp ||
+                          delivery.platform ||
+                          "DSP"}
+                      </p>
+
+                      <p className="mt-1 text-sm text-zinc-500">
+                        {delivery.created_at
+                          ? formatDate(
+                              delivery.created_at
+                            )
+                          : ""}
+                      </p>
+                    </div>
+
+                    <span
+                      className={`w-fit rounded-full border px-3 py-1 text-xs font-medium ${statusClass(
+                        delivery.status
+                      )}`}
+                    >
+                      {(
+                        delivery.status ||
+                        "pending"
+                      ).toUpperCase()}
+                    </span>
+                  </div>
+                )
+              )}
             </div>
           )}
         </section>
 
-        {/* RELEASE RAW DATA */}
-        <section className="mt-8 rounded-2xl border border-white/10 bg-[#0d1224]">
+        {/* TECHNICAL DATA */}
 
+        <section className="mt-8 rounded-2xl border border-white/10 bg-[#0d1224]">
           <details>
             <summary className="cursor-pointer p-6 font-semibold">
               Technical Release Data
@@ -458,7 +511,6 @@ export default function ReleaseDetailPage() {
               )}
             </pre>
           </details>
-
         </section>
       </div>
     </main>

@@ -1,24 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
+/* ======================================================
+   TYPES
+====================================================== */
+
 type Release = {
   id: string;
+
   title?: string | null;
   artist_name?: string | null;
   label_name?: string | null;
+
   status?: string | null;
   type?: string | null;
+
   created_at?: string | null;
+
   user_id?: string | null;
   white_label_id?: string | null;
+
   admin_note?: string | null;
-  toolost_release_id?: string | number | null;
+
+  toolost_release_id?:
+    | string
+    | number
+    | null;
+
+  toolost_status?: string | null;
+  toolost_review_note?: string | null;
 
   uploaded_by_name?: string | null;
   uploaded_by_email?: string | null;
+
   white_label_name?: string | null;
 
   [key: string]: any;
@@ -27,13 +50,34 @@ type Release = {
 type DSPDelivery = {
   id: string;
   release_id: string;
+
   dsp_name?: string | null;
   dsp?: string | null;
   platform?: string | null;
+
   status?: string | null;
   live_link?: string | null;
+
   created_at?: string | null;
+
+  [key: string]: any;
 };
+
+type AdminProfile = {
+  id: string;
+
+  role?: string | null;
+  status?: string | null;
+
+  white_label_id?: string | null;
+
+  full_name?: string | null;
+  email?: string | null;
+};
+
+/* ======================================================
+   DSP LIST
+====================================================== */
 
 const DSP_LIST = [
   "Spotify",
@@ -50,49 +94,108 @@ const DSP_LIST = [
   "Audiomack",
 ];
 
+/* ======================================================
+   STATUS FILTERS
+====================================================== */
+
 const STATUS_LIST = [
   "all",
   "draft",
   "pending",
+  "in_review",
   "under_review",
+  "needs_docs",
   "approved",
   "rejected",
   "delivered",
   "live",
+  "takedown_pending",
   "takedown",
+  "takedown_complete",
 ];
+
+/* ======================================================
+   PAGE
+====================================================== */
 
 export default function AdminReleasesPage() {
   const router = useRouter();
 
-  const [releases, setReleases] = useState<Release[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [releases, setReleases] =
+    useState<Release[]>([]);
 
-  const [adminProfile, setAdminProfile] =
-    useState<any>(null);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] =
+  const [error, setError] =
+    useState("");
+
+  const [
+    adminProfile,
+    setAdminProfile,
+  ] =
+    useState<AdminProfile | null>(
+      null
+    );
+
+  const [search, setSearch] =
+    useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] =
     useState("all");
 
-  const [selectedRelease, setSelectedRelease] =
-    useState<Release | null>(null);
+  /* ====================================================
+     DSP MODAL
+  ==================================================== */
 
-  const [selectedDSPs, setSelectedDSPs] =
+  const [
+    selectedRelease,
+    setSelectedRelease,
+  ] =
+    useState<Release | null>(
+      null
+    );
+
+  const [
+    selectedDSPs,
+    setSelectedDSPs,
+  ] =
     useState<string[]>([]);
 
-  const [existingDSPs, setExistingDSPs] =
-    useState<DSPDelivery[]>([]);
+  const [
+    existingDSPs,
+    setExistingDSPs,
+  ] =
+    useState<DSPDelivery[]>(
+      []
+    );
 
-  const [loadingDSPs, setLoadingDSPs] =
+  const [
+    loadingDSPs,
+    setLoadingDSPs,
+  ] =
     useState(false);
 
-  const [savingDSPs, setSavingDSPs] =
+  const [
+    savingDSPs,
+    setSavingDSPs,
+  ] =
     useState(false);
 
-  const [actionLoading, setActionLoading] =
-    useState<string | null>(null);
+  const [
+    actionLoading,
+    setActionLoading,
+  ] =
+    useState<string | null>(
+      null
+    );
+
+  /* ====================================================
+     LOAD ON START
+  ==================================================== */
 
   useEffect(() => {
     checkAdmin();
@@ -100,284 +203,279 @@ export default function AdminReleasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ==========================================
-  // ADMIN CHECK
-  // ==========================================
+  /* ====================================================
+     ADMIN CHECK
+  ==================================================== */
 
   async function checkAdmin() {
-  try {
-    const {
-      data: userData,
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    console.log("ADMIN AUTH USER:", userData.user);
-    console.log("ADMIN AUTH ERROR:", userError);
-
-    if (userError || !userData.user) {
-      console.error(
-        "No authenticated user:",
-        userError
-      );
-
-      router.push("/login");
-      return;
-    }
-
-    const userId = userData.user.id;
-
-    const {
-      data: profile,
-      error: profileError,
-    } = await supabase
-      .from("profiles")
-      .select(
-        "id,role,status,white_label_id,full_name,email"
-      )
-      .eq("id", userId)
-      .maybeSingle();
-
-    console.log(
-      "ADMIN PROFILE:",
-      profile
-    );
-
-    console.log(
-      "ADMIN PROFILE ERROR:",
-      profileError
-    );
-
-    // Do NOT silently redirect.
-    // Show the real problem on screen.
-    if (profileError) {
-      setError(
-        `Profile query failed: ${profileError.message}`
-      );
-
-      setLoading(false);
-      return;
-    }
-
-    if (!profile) {
-      setError(
-        `No profile found for logged-in user. User ID: ${userId}`
-      );
-
-      setLoading(false);
-      return;
-    }
-
-    const userRole = String(
-      profile.role || ""
-    )
-      .trim()
-      .toLowerCase();
-
-    const userStatus = String(
-      profile.status || ""
-    )
-      .trim()
-      .toLowerCase();
-
-    console.log(
-      "ADMIN ROLE:",
-      userRole
-    );
-
-    console.log(
-      "ADMIN STATUS:",
-      userStatus
-    );
-
-    const allowedRoles = [
-      "master_admin",
-      "white_label_admin",
-      "admin",
-    ];
-
-    if (
-      !allowedRoles.includes(
-        userRole
-      )
-    ) {
-      setError(
-        `Admin access denied. Your current role is "${profile.role}".`
-      );
-
-      setLoading(false);
-      return;
-    }
-
-    if (
-      userStatus &&
-      userStatus !== "active"
-    ) {
-      setError(
-        `Admin access denied. Your account status is "${profile.status}".`
-      );
-
-      setLoading(false);
-      return;
-    }
-
-    setAdminProfile(profile);
-
-    await loadReleases(profile);
-  } catch (err) {
-    console.error(
-      "ADMIN CHECK ERROR:",
-      err
-    );
-
-    setError(
-      err instanceof Error
-        ? err.message
-        : "Unable to verify admin."
-    );
-
-    setLoading(false);
-  }
-}
-
-  // ==========================================
-  // LOAD RELEASES
-  // ==========================================
-
-  async function loadReleases(
-    profileParam = adminProfile
-  ) {
-    setLoading(true);
-    setError("");
-
     try {
-      let query = supabase
-        .from("releases")
-        .select("*")
-        .order("created_at", {
-          ascending: false,
-        });
+      setLoading(true);
+      setError("");
+
+      const {
+        data: userData,
+        error: userError,
+      } =
+        await supabase.auth.getUser();
 
       if (
-        profileParam?.role ===
-        "white_label_admin"
+        userError ||
+        !userData.user
       ) {
-        if (
-          !profileParam.white_label_id
-        ) {
-          setReleases([]);
-          setLoading(false);
-          return;
-        }
-
-        query = query.eq(
-          "white_label_id",
-          profileParam.white_label_id
+        router.replace(
+          "/admin-login"
         );
+
+        return;
       }
 
-      const {
-        data: releaseData,
-        error: releaseError,
-      } = await query;
-
-      if (releaseError) {
-        throw new Error(
-          releaseError.message
-        );
-      }
+      const userId =
+        userData.user.id;
 
       const {
-        data: profilesData,
+        data: profile,
+        error: profileError,
       } = await supabase
         .from("profiles")
         .select(
-          "id,full_name,email,role,white_label_id"
+          "id,role,status,white_label_id,full_name,email"
+        )
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (profileError) {
+        throw new Error(
+          `Profile query failed: ${profileError.message}`
+        );
+      }
+
+      if (!profile) {
+        throw new Error(
+          "Admin profile was not found."
+        );
+      }
+
+      const role =
+        String(
+          profile.role || ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const status =
+        String(
+          profile.status || ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const allowedRoles = [
+        "master_admin",
+        "white_label_admin",
+        "admin",
+      ];
+
+      if (
+        !allowedRoles.includes(
+          role
+        )
+      ) {
+        await supabase.auth.signOut();
+
+        router.replace(
+          "/admin-login"
         );
 
-      const {
-        data: whiteLabelsData,
-      } = await supabase
-        .from("white_labels")
-        .select(
-          "id,name,brand_name,domain"
+        return;
+      }
+
+      if (
+        status &&
+        status !== "active"
+      ) {
+        throw new Error(
+          `Admin account is "${profile.status}".`
         );
+      }
 
-      const merged =
-        (releaseData || []).map(
-          (release: any) => {
-            const profile =
-              profilesData?.find(
-                (p) =>
-                  p.id ===
-                  release.user_id
-              );
+      const normalizedProfile: AdminProfile =
+        {
+          ...profile,
+          role,
+          status,
+        };
 
-            const whiteLabel =
-              whiteLabelsData?.find(
-                (wl) =>
-                  wl.id ===
-                  release.white_label_id
-              );
+      setAdminProfile(
+        normalizedProfile
+      );
 
-            return {
-              ...release,
-
-              uploaded_by_name:
-                profile?.full_name ||
-                "-",
-
-              uploaded_by_email:
-                profile?.email ||
-                "-",
-
-              white_label_name:
-                whiteLabel?.name ||
-                whiteLabel?.brand_name ||
-                "Nexorael Direct",
-            };
-          }
-        );
-
-      setReleases(merged);
+      await loadReleases(
+        normalizedProfile
+      );
     } catch (err) {
-      console.error(err);
+      console.error(
+        "ADMIN CHECK:",
+        err
+      );
 
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to load releases."
+          : "Unable to verify admin."
       );
-    } finally {
+
       setLoading(false);
     }
   }
 
-  // ==========================================
-  // OPEN DSP SELECTOR
-  // ==========================================
+  /* ====================================================
+     LOAD RELEASES
 
-async function openDSPSelector(
-  release: Release
-) {
-  setSelectedRelease(release);
-  setSelectedDSPs([]);
-  setExistingDSPs([]);
-  setLoadingDSPs(true);
+     IMPORTANT:
+     Uses our Admin API first.
+     That API synchronizes Too Lost statuses.
+  ==================================================== */
 
-  try {
-    const response = await fetch(
-      `/api/admin/releases/${release.id}`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          action: "get_dsps",
-        }),
-      }
+  const loadReleases =
+    useCallback(
+      async (
+        profileParam?: AdminProfile | null
+      ) => {
+        const profile =
+          profileParam ||
+          adminProfile;
+
+        setLoading(true);
+        setError("");
+
+        try {
+          const response =
+            await fetch(
+              `/api/admin/releases?t=${Date.now()}`,
+              {
+                method: "GET",
+                cache: "no-store",
+              }
+            );
+
+          const json =
+            await response.json();
+
+          if (
+            !response.ok ||
+            json?.success === false
+          ) {
+            throw new Error(
+              json?.error ||
+                "Unable to load releases."
+            );
+          }
+
+          /*
+           * Support common response wrappers.
+           */
+          let releaseData: Release[] =
+            [];
+
+          if (
+            Array.isArray(
+              json?.releases
+            )
+          ) {
+            releaseData =
+              json.releases;
+          } else if (
+            Array.isArray(
+              json?.data
+            )
+          ) {
+            releaseData =
+              json.data;
+          } else if (
+            Array.isArray(json)
+          ) {
+            releaseData =
+              json;
+          }
+
+          /*
+           * White-label admins may only
+           * see their own white-label releases.
+           */
+          if (
+            String(
+              profile?.role || ""
+            ).toLowerCase() ===
+            "white_label_admin"
+          ) {
+            const whiteLabelId =
+              profile?.white_label_id;
+
+            if (!whiteLabelId) {
+              releaseData =
+                [];
+            } else {
+              releaseData =
+                releaseData.filter(
+                  (release) =>
+                    String(
+                      release.white_label_id ||
+                        ""
+                    ) ===
+                    String(
+                      whiteLabelId
+                    )
+                );
+            }
+          }
+
+          setReleases(
+            releaseData
+          );
+        } catch (err) {
+          console.error(
+            "LOAD RELEASES:",
+            err
+          );
+
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load releases."
+          );
+        } finally {
+          setLoading(false);
+        }
+      },
+      [adminProfile]
     );
+
+  /* ====================================================
+     FETCH SELECTED DSP RECORDS FOR A RELEASE
+  ==================================================== */
+
+  async function fetchReleaseDSPs(
+    release: Release
+  ): Promise<
+    DSPDelivery[]
+  > {
+    const response =
+      await fetch(
+        `/api/admin/releases/${release.id}`,
+        {
+          method: "PATCH",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            action:
+              "get_dsps",
+          }),
+        }
+      );
 
     const data =
       await response.json();
@@ -388,54 +486,91 @@ async function openDSPSelector(
     ) {
       throw new Error(
         data.error ||
-          "Unable to load DSPs."
+          "Unable to load DSP selection."
       );
     }
 
-    setExistingDSPs(
-      data.selected || []
-    );
-
-    setSelectedDSPs(
-      (data.selected || [])
-        .map(
-          (item: DSPDelivery) =>
-            item.dsp_name ||
-            item.dsp ||
-            item.platform ||
-            ""
-        )
-        .filter(Boolean)
-    );
-  } catch (error) {
-    console.error(error);
-
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Unable to load DSPs."
-    );
-  } finally {
-    setLoadingDSPs(false);
+    return Array.isArray(
+      data.selected
+    )
+      ? data.selected
+      : [];
   }
-}
 
-  // ==========================================
-  // TOGGLE DSP
-  // ==========================================
+  /* ====================================================
+     OPEN DSP SELECTOR
+  ==================================================== */
 
-  function toggleDSP(dsp: string) {
-    const alreadyExists =
+  async function openDSPSelector(
+    release: Release
+  ) {
+    setSelectedRelease(
+      release
+    );
+
+    setSelectedDSPs([]);
+    setExistingDSPs([]);
+
+    setLoadingDSPs(true);
+
+    try {
+      const selected =
+        await fetchReleaseDSPs(
+          release
+        );
+
+      setExistingDSPs(
+        selected
+      );
+
+      setSelectedDSPs(
+        selected
+          .map(
+            (
+              item: DSPDelivery
+            ) =>
+              item.dsp_name ||
+              item.dsp ||
+              item.platform ||
+              ""
+          )
+          .filter(Boolean)
+      );
+    } catch (err) {
+      console.error(err);
+
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Unable to load DSPs."
+      );
+    } finally {
+      setLoadingDSPs(
+        false
+      );
+    }
+  }
+
+  /* ====================================================
+     TOGGLE DSP
+  ==================================================== */
+
+  function toggleDSP(
+    dsp: string
+  ) {
+    const alreadySaved =
       existingDSPs.some(
         (item) =>
-          (
-            item.dsp_name ||
-            item.dsp ||
-            item.platform
+          getDSPName(
+            item
           ) === dsp
       );
 
-    if (alreadyExists) {
+    /*
+     * Existing DSP records cannot
+     * accidentally be removed here.
+     */
+    if (alreadySaved) {
       return;
     }
 
@@ -443,83 +578,166 @@ async function openDSPSelector(
       (current) =>
         current.includes(dsp)
           ? current.filter(
-              (item) => item !== dsp
+              (item) =>
+                item !== dsp
             )
-          : [...current, dsp]
+          : [
+              ...current,
+              dsp,
+            ]
     );
   }
 
-  // ==========================================
-  // SAVE DSP SELECTION
-  // ==========================================
+  /* ====================================================
+     SELECT ALL DSP
+  ==================================================== */
+
+  function selectAllDSPs() {
+    setSelectedDSPs(
+      Array.from(
+        new Set([
+          ...selectedDSPs,
+          ...DSP_LIST,
+          ...existingDSPs
+            .map(
+              getDSPName
+            )
+            .filter(
+              Boolean
+            ),
+        ])
+      )
+    );
+  }
+
+  /* ====================================================
+     CLEAR ONLY NEW DSP SELECTION
+  ==================================================== */
+
+  function clearNewDSPSelection() {
+    const saved =
+      existingDSPs
+        .map(getDSPName)
+        .filter(
+          Boolean
+        );
+
+    setSelectedDSPs(
+      saved
+    );
+  }
+
+  /* ====================================================
+     SAVE DSP SELECTION
+  ==================================================== */
 
   async function saveDSPs() {
-  if (!selectedRelease) return;
-
-  if (selectedDSPs.length === 0) {
-    alert("Please select at least one DSP.");
-    return;
-  }
-
-  setSavingDSPs(true);
-
-  try {
-    const response = await fetch(
-      `/api/admin/releases/${selectedRelease.id}`,
-      {
-        method: "PATCH",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          action: "save_dsps",
-          dsps: selectedDSPs,
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok || !data.success) {
-      throw new Error(
-        data.error ||
-          "Unable to save DSP selection."
-      );
+    if (!selectedRelease) {
+      return;
     }
 
-    setExistingDSPs(
-      data.deliveries || []
-    );
+    if (
+      selectedDSPs.length ===
+      0
+    ) {
+      alert(
+        "Please select at least one DSP."
+      );
 
-    alert(
-      "DSP selection saved successfully."
-    );
-  } catch (error) {
-    console.error(error);
+      return;
+    }
 
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Unable to save DSPs."
-    );
-  } finally {
-    setSavingDSPs(false);
+    setSavingDSPs(true);
+
+    try {
+      const response =
+        await fetch(
+          `/api/admin/releases/${selectedRelease.id}`,
+          {
+            method: "PATCH",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+              action:
+                "save_dsps",
+
+              dsps:
+                selectedDSPs,
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        throw new Error(
+          data.error ||
+            "Unable to save DSP selection."
+        );
+      }
+
+      const deliveries =
+        Array.isArray(
+          data.deliveries
+        )
+          ? data.deliveries
+          : [];
+
+      setExistingDSPs(
+        deliveries
+      );
+
+      setSelectedDSPs(
+        deliveries.length
+          ? deliveries
+              .map(
+                getDSPName
+              )
+              .filter(
+                Boolean
+              )
+          : selectedDSPs
+      );
+
+      alert(
+        "DSP selection saved successfully."
+      );
+    } catch (err) {
+      console.error(err);
+
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Unable to save DSPs."
+      );
+    } finally {
+      setSavingDSPs(
+        false
+      );
+    }
   }
-}
 
-  // ==========================================
-  // RELEASE ACTION
-  // ==========================================
+  /* ====================================================
+     RELEASE ACTION
+  ==================================================== */
 
   async function updateReleaseStatus(
     release: Release,
-    status: string
+    action: string
   ) {
     let note = "";
 
     if (
-      status === "rejected"
+      action ===
+      "reject"
     ) {
       note =
         prompt(
@@ -530,12 +748,14 @@ async function openDSPSelector(
         alert(
           "Rejection reason is required."
         );
+
         return;
       }
     }
 
     if (
-      status === "takedown"
+      action ===
+      "takedown"
     ) {
       note =
         prompt(
@@ -546,31 +766,36 @@ async function openDSPSelector(
         alert(
           "Takedown reason is required."
         );
+
         return;
       }
     }
 
     const actionKey =
-      `${release.id}-${status}`;
+      `${release.id}-${action}`;
 
-    setActionLoading(actionKey);
+    setActionLoading(
+      actionKey
+    );
 
     try {
       const response =
         await fetch(
           `/api/admin/releases/${release.id}`,
           {
-            method: "PATCH",
+            method:
+              "PATCH",
 
             headers: {
               "Content-Type":
                 "application/json",
             },
 
-            body: JSON.stringify({
-              action: status,
-              note,
-            }),
+            body:
+              JSON.stringify({
+                action,
+                note,
+              }),
           }
         );
 
@@ -604,59 +829,78 @@ async function openDSPSelector(
           : "Release action failed."
       );
     } finally {
-      setActionLoading(null);
+      setActionLoading(
+        null
+      );
     }
   }
 
-  // ==========================================
-  // APPROVE & SUBMIT
-  // ==========================================
+  /* ====================================================
+     APPROVE + SUBMIT TO TOO LOST
+
+     FIX:
+     It fetches DSPs for THIS release.
+     It no longer depends on whichever modal
+     happened to be opened previously.
+  ==================================================== */
 
   async function approveRelease(
     release: Release
   ) {
-    const dspCount =
-      existingDSPs.length;
-
-    if (dspCount === 0) {
-      alert(
-        "Please select at least one DSP before approving this release."
-      );
-
-      await openDSPSelector(
-        release
-      );
-
-      return;
-    }
-
-    const confirmed =
-      confirm(
-        `Approve "${release.title || "Untitled"}" and submit it to Too Lost?`
-      );
-
-    if (!confirmed) return;
-
-    const actionKey =
-      `${release.id}-approve`;
-
-    setActionLoading(actionKey);
-
     try {
+      const selectedDSPRecords =
+        await fetchReleaseDSPs(
+          release
+        );
+
+      if (
+        selectedDSPRecords.length ===
+        0
+      ) {
+        alert(
+          "Please select at least one DSP before approving this release."
+        );
+
+        await openDSPSelector(
+          release
+        );
+
+        return;
+      }
+
+      const confirmed =
+        confirm(
+          `Approve "${release.title || "Untitled"}" and submit it to Too Lost?`
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      const actionKey =
+        `${release.id}-approve`;
+
+      setActionLoading(
+        actionKey
+      );
+
       const response =
         await fetch(
           `/api/admin/releases/${release.id}`,
           {
-            method: "PATCH",
+            method:
+              "PATCH",
 
             headers: {
               "Content-Type":
                 "application/json",
             },
 
-            body: JSON.stringify({
-              action: "approve",
-            }),
+            body:
+              JSON.stringify({
+                action:
+                  "approve",
+              }),
           }
         );
 
@@ -674,14 +918,18 @@ async function openDSPSelector(
       }
 
       alert(
-        "Release approved and submitted to Too Lost successfully."
+        data.message ||
+          "Release approved and submitted to Too Lost successfully."
       );
 
       await loadReleases(
         adminProfile
       );
     } catch (err) {
-      console.error(err);
+      console.error(
+        "APPROVE RELEASE:",
+        err
+      );
 
       alert(
         err instanceof Error
@@ -689,177 +937,246 @@ async function openDSPSelector(
           : "Too Lost submission failed."
       );
     } finally {
-      setActionLoading(null);
+      setActionLoading(
+        null
+      );
     }
   }
 
-  // ==========================================
-  // FILTER
-  // ==========================================
+  /* ====================================================
+     FILTERED RELEASES
+  ==================================================== */
 
   const filteredReleases =
-    releases.filter(
-      (release) => {
+    useMemo(() => {
+      const searchText =
+        search
+          .trim()
+          .toLowerCase();
+
+      return releases.filter(
+        (release) => {
+          const status =
+            normalizeStatus(
+              release.status
+            );
+
+          const matchesSearch =
+            !searchText ||
+            String(
+              release.title ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              ) ||
+            String(
+              release.artist_name ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              ) ||
+            String(
+              release.label_name ||
+                release.white_label_name ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              ) ||
+            String(
+              release.uploaded_by_name ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              ) ||
+            String(
+              release.uploaded_by_email ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              ) ||
+            String(
+              release.toolost_release_id ||
+                ""
+            )
+              .toLowerCase()
+              .includes(
+                searchText
+              );
+
+          const matchesStatus =
+            statusFilter ===
+              "all" ||
+            status ===
+              statusFilter;
+
+          return (
+            matchesSearch &&
+            matchesStatus
+          );
+        }
+      );
+    }, [
+      releases,
+      search,
+      statusFilter,
+    ]);
+
+  /* ====================================================
+     COUNTS
+  ==================================================== */
+
+  const stats =
+    useMemo(() => {
+      let draft = 0;
+      let pending = 0;
+      let live = 0;
+      let needsDocs = 0;
+
+      for (
+        const release of releases
+      ) {
         const status =
-          String(
-            release.status || ""
-          ).toLowerCase();
+          normalizeStatus(
+            release.status
+          );
 
-        const searchText =
-          search
-            .toLowerCase()
-            .trim();
-
-        const matchesSearch =
-          !searchText ||
-          String(
-            release.title || ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          String(
-            release.artist_name || ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          String(
-            release.label_name || ""
-          )
-            .toLowerCase()
-            .includes(searchText) ||
-          String(
-            release.toolost_release_id ||
-              ""
-          )
-            .toLowerCase()
-            .includes(searchText);
-
-        const matchesStatus =
-          statusFilter ===
-            "all" ||
+        if (
           status ===
-            statusFilter;
+          "draft"
+        ) {
+          draft += 1;
+        }
 
-        return (
-          matchesSearch &&
-          matchesStatus
-        );
+        if (
+          [
+            "pending",
+            "in_review",
+            "under_review",
+            "processing",
+            "approved",
+          ].includes(
+            status
+          )
+        ) {
+          pending += 1;
+        }
+
+        if (
+          status ===
+          "live"
+        ) {
+          live += 1;
+        }
+
+        if (
+          status ===
+          "needs_docs"
+        ) {
+          needsDocs += 1;
+        }
       }
-    );
 
-  // ==========================================
-  // STATS
-  // ==========================================
+      return {
+        total:
+          releases.length,
 
-  const total =
-    releases.length;
+        draft,
 
-  const draftCount =
-    releases.filter(
-      (r) =>
-        String(
-          r.status || ""
-        ).toLowerCase() ===
-        "draft"
-    ).length;
+        pending,
 
-  const pendingCount =
-    releases.filter(
-      (r) => {
-        const status =
-          String(
-            r.status || ""
-          ).toLowerCase();
+        live,
 
-        return (
-          status ===
-            "pending" ||
-          status ===
-            "under_review" ||
-          status ===
-            "processing"
-        );
-      }
-    ).length;
+        needsDocs,
+      };
+    }, [releases]);
 
-  const liveCount =
-    releases.filter(
-      (r) =>
-        String(
-          r.status || ""
-        ).toLowerCase() ===
-        "live"
-    ).length;
-
-  // ==========================================
-  // UI
-  // ==========================================
+  /* ====================================================
+     UI
+  ==================================================== */
 
   return (
     <main className="min-h-screen bg-[#050816] p-6 text-white md:p-10">
-
       <div className="mx-auto max-w-[1600px]">
-
         {/* HEADER */}
 
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-
           <div>
-
             <h1 className="text-3xl font-bold">
               Release Management
             </h1>
 
             <p className="mt-2 text-sm text-zinc-500">
-              Manage releases, DSP distribution,
-              approvals and takedowns.
+              Manage releases,
+              DSP distribution,
+              Too Lost submissions
+              and takedowns.
             </p>
-
           </div>
 
           <button
+            type="button"
             onClick={() =>
               loadReleases(
                 adminProfile
               )
             }
             disabled={loading}
-            className="rounded-xl bg-white px-5 py-3 font-semibold text-black disabled:opacity-50"
+            className="rounded-xl bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading
-              ? "Loading..."
+              ? "Syncing..."
               : "Refresh Releases"}
           </button>
-
         </div>
-
 
         {/* STATS */}
 
-        <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-
+        <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-5">
           <Stat
             label="Total Releases"
-            value={total}
+            value={
+              stats.total
+            }
           />
 
           <Stat
             label="Draft"
-            value={draftCount}
+            value={
+              stats.draft
+            }
           />
 
           <Stat
             label="Pending Review"
-            value={pendingCount}
+            value={
+              stats.pending
+            }
+          />
+
+          <Stat
+            label="Needs Docs"
+            value={
+              stats.needsDocs
+            }
           />
 
           <Stat
             label="Live"
-            value={liveCount}
+            value={
+              stats.live
+            }
           />
-
         </div>
-
 
         {/* ERROR */}
 
@@ -869,64 +1186,73 @@ async function openDSPSelector(
           </div>
         )}
 
-
-        {/* FILTER BAR */}
+        {/* FILTER */}
 
         <div className="mt-8 rounded-2xl border border-white/10 bg-[#0d1224] p-5">
-
           <div className="flex flex-col gap-4 lg:flex-row">
-
             <input
-              value={search}
-              onChange={(e) =>
+              value={
+                search
+              }
+              onChange={(
+                e
+              ) =>
                 setSearch(
-                  e.target.value
+                  e.target
+                    .value
                 )
               }
-              placeholder="Search title, artist, label or Too Lost ID..."
+              placeholder="Search title, artist, label, user or Too Lost ID..."
               className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none placeholder:text-zinc-600 focus:border-blue-500 lg:flex-1"
             />
 
             <select
-              value={statusFilter}
-              onChange={(e) =>
+              value={
+                statusFilter
+              }
+              onChange={(
+                e
+              ) =>
                 setStatusFilter(
-                  e.target.value
+                  e.target
+                    .value
                 )
               }
-              className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none"
+              className="rounded-xl border border-white/10 bg-[#080d19] px-4 py-3 text-sm outline-none"
             >
               {STATUS_LIST.map(
-                (status) => (
+                (
+                  status
+                ) => (
                   <option
-                    key={status}
-                    value={status}
+                    key={
+                      status
+                    }
+                    value={
+                      status
+                    }
                   >
-                    {status === "all"
+                    {status ===
+                    "all"
                       ? "All Status"
-                      : status
-                          .replace(
-                            "_",
-                            " "
-                          )
-                          .toUpperCase()}
+                      : formatStatus(
+                          status
+                        )}
                   </option>
                 )
               )}
             </select>
-
           </div>
-
         </div>
-
 
         {/* RELEASE TABLE */}
 
         <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0d1224]">
-
           {loading ? (
             <div className="p-12 text-center text-zinc-500">
-              Loading releases...
+              Loading and
+              synchronizing
+              releases...
             </div>
           ) : filteredReleases.length ===
             0 ? (
@@ -935,13 +1261,9 @@ async function openDSPSelector(
             </div>
           ) : (
             <div className="overflow-x-auto">
-
               <table className="w-full min-w-[1450px]">
-
                 <thead className="border-b border-white/10 bg-black/20">
-
                   <tr className="text-left text-xs uppercase tracking-wider text-zinc-500">
-
                     <th className="px-5 py-4">
                       Release
                     </th>
@@ -969,22 +1291,18 @@ async function openDSPSelector(
                     <th className="px-5 py-4">
                       Actions
                     </th>
-
                   </tr>
-
                 </thead>
 
-
                 <tbody>
-
                   {filteredReleases.map(
-                    (release) => {
-
+                    (
+                      release
+                    ) => {
                       const status =
-                        String(
-                          release.status ||
-                            "draft"
-                        ).toLowerCase();
+                        normalizeStatus(
+                          release.status
+                        );
 
                       const approveLoading =
                         actionLoading ===
@@ -997,23 +1315,21 @@ async function openDSPSelector(
                           }
                           className="border-b border-white/5 hover:bg-white/[0.025]"
                         >
-
                           {/* RELEASE */}
 
                           <td className="px-5 py-5">
-
                             <div className="font-semibold">
                               {release.title ||
                                 "Untitled Release"}
                             </div>
 
-                            <div className="mt-1 text-xs text-zinc-600">
+                            <div className="mt-1 max-w-[260px] break-all text-xs text-zinc-600">
                               ID:{" "}
-                              {release.id}
+                              {
+                                release.id
+                              }
                             </div>
-
                           </td>
-
 
                           {/* ARTIST */}
 
@@ -1022,13 +1338,12 @@ async function openDSPSelector(
                               "—"}
                           </td>
 
-
-                          {/* LABEL */}
+                          {/* LABEL / USER */}
 
                           <td className="px-5 py-5">
-
                             <div className="text-sm text-zinc-300">
                               {release.white_label_name ||
+                                release.label_name ||
                                 "Nexorael Direct"}
                             </div>
 
@@ -1041,62 +1356,56 @@ async function openDSPSelector(
                               {release.uploaded_by_email ||
                                 "-"}
                             </div>
-
                           </td>
 
-
-                          {/* TOO LOST */}
+                          {/* TOO LOST ID */}
 
                           <td className="px-5 py-5 font-mono text-xs text-zinc-400">
-
                             {release.toolost_release_id ||
                               "Not connected"}
-
                           </td>
-
 
                           {/* STATUS */}
 
                           <td className="px-5 py-5">
-
                             <span
                               className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase ${statusClass(
                                 status
                               )}`}
                             >
-                              {status}
+                              {formatStatus(
+                                status
+                              )}
                             </span>
 
+                            {release.toolost_review_note && (
+                              <div className="mt-2 max-w-[230px] text-xs text-orange-300">
+                                {
+                                  release.toolost_review_note
+                                }
+                              </div>
+                            )}
                           </td>
-
 
                           {/* CREATED */}
 
                           <td className="px-5 py-5 text-sm text-zinc-500">
-
-                            {release.created_at
-                              ? new Date(
-                                  release.created_at
-                                ).toLocaleDateString(
-                                  "en-IN"
-                                )
-                              : "—"}
-
+                            {formatDate(
+                              release.created_at
+                            )}
                           </td>
-
 
                           {/* ACTIONS */}
 
                           <td className="px-5 py-5">
-
                             <div className="flex flex-wrap gap-2">
-
                               {/* VIEW */}
 
                               <button
+                                type="button"
                                 onClick={() =>
                                   router.push(
-                                    `/releases/${release.id}`
+                                    `/releases/${release.id}?from=admin`
                                   )
                                 }
                                 className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium hover:bg-white/10"
@@ -1104,10 +1413,10 @@ async function openDSPSelector(
                                 View
                               </button>
 
-
                               {/* DSP */}
 
                               <button
+                                type="button"
                                 onClick={() =>
                                   openDSPSelector(
                                     release
@@ -1118,139 +1427,146 @@ async function openDSPSelector(
                                 DSP Select
                               </button>
 
-
                               {/* APPROVE */}
 
-                              <button
-                                onClick={() =>
-                                  approveRelease(
-                                    release
-                                  )
-                                }
-                                disabled={
-                                  approveLoading
-                                }
-                                className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold hover:bg-green-500 disabled:opacity-50"
-                              >
-                                {approveLoading
-                                  ? "Submitting..."
-                                  : "Approve & Submit"}
-                              </button>
-
+                              {[
+                                "draft",
+                                "pending",
+                                "under_review",
+                                "in_review",
+                              ].includes(
+                                status
+                              ) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    approveRelease(
+                                      release
+                                    )
+                                  }
+                                  disabled={
+                                    approveLoading
+                                  }
+                                  className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold hover:bg-green-500 disabled:opacity-50"
+                                >
+                                  {approveLoading
+                                    ? "Submitting..."
+                                    : "Approve & Submit"}
+                                </button>
+                              )}
 
                               {/* REJECT */}
 
-                              <button
-                                onClick={() =>
-                                  updateReleaseStatus(
-                                    release,
-                                    "rejected"
-                                  )
-                                }
-                                disabled={
-                                  actionLoading ===
-                                  `${release.id}-rejected`
-                                }
-                                className="rounded-lg bg-red-600/90 px-3 py-2 text-xs font-semibold hover:bg-red-500 disabled:opacity-50"
-                              >
-                                Reject
-                              </button>
-
+                              {![
+                                "live",
+                                "takedown",
+                                "takedown_pending",
+                                "takedown_complete",
+                              ].includes(
+                                status
+                              ) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateReleaseStatus(
+                                      release,
+                                      "reject"
+                                    )
+                                  }
+                                  disabled={
+                                    actionLoading ===
+                                    `${release.id}-reject`
+                                  }
+                                  className="rounded-lg bg-red-600/90 px-3 py-2 text-xs font-semibold hover:bg-red-500 disabled:opacity-50"
+                                >
+                                  Reject
+                                </button>
+                              )}
 
                               {/* DRAFT */}
 
-                              <button
-                                onClick={() =>
-                                  updateReleaseStatus(
-                                    release,
-                                    "draft"
-                                  )
-                                }
-                                disabled={
-                                  actionLoading ===
-                                  `${release.id}-draft`
-                                }
-                                className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs font-medium text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50"
-                              >
-                                Draft
-                              </button>
+                              {[
+                                "pending",
+                                "rejected",
+                                "approved",
+                              ].includes(
+                                status
+                              ) && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateReleaseStatus(
+                                      release,
+                                      "draft"
+                                    )
+                                  }
+                                  disabled={
+                                    actionLoading ===
+                                    `${release.id}-draft`
+                                  }
+                                  className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs font-medium text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50"
+                                >
+                                  Draft
+                                </button>
+                              )}
 
+                              {/* TAKEDOWN
+                                  Only actual live releases
+                                  should be taken down.
+                              */}
 
-                              {/* LIVE */}
+                              {status ===
+                                "live" && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateReleaseStatus(
+                                      release,
+                                      "takedown"
+                                    )
+                                  }
+                                  disabled={
+                                    actionLoading ===
+                                    `${release.id}-takedown`
+                                  }
+                                  className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                                >
+                                  Takedown
+                                </button>
+                              )}
 
-                              <button
-                                onClick={() =>
-                                  updateReleaseStatus(
-                                    release,
-                                    "live"
-                                  )
-                                }
-                                disabled={
-                                  actionLoading ===
-                                  `${release.id}-live`
-                                }
-                                className="rounded-lg border border-green-500/20 bg-green-500/10 px-3 py-2 text-xs font-medium text-green-400 hover:bg-green-500/20 disabled:opacity-50"
-                              >
-                                Live
-                              </button>
-
-
-                              {/* TAKEDOWN */}
-
-                              <button
-                                onClick={() =>
-                                  updateReleaseStatus(
-                                    release,
-                                    "takedown"
-                                  )
-                                }
-                                disabled={
-                                  actionLoading ===
-                                  `${release.id}-takedown`
-                                }
-                                className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
-                              >
-                                Takedown
-                              </button>
-
+                              {status ===
+                                "needs_docs" && (
+                                <span className="rounded-lg border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-xs font-medium text-orange-300">
+                                  Documents
+                                  Required
+                                </span>
+                              )}
                             </div>
-
                           </td>
-
                         </tr>
                       );
                     }
                   )}
-
                 </tbody>
-
               </table>
-
             </div>
           )}
-
         </div>
-
       </div>
 
-
-      {/* ======================================
+      {/* =================================================
           DSP MODAL
-      ====================================== */}
+      ================================================= */}
 
       {selectedRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#0d1224] shadow-2xl">
-
-            {/* MODAL HEADER */}
+            {/* HEADER */}
 
             <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0d1224] p-6">
-
               <div className="flex items-start justify-between gap-4">
-
                 <div>
-
                   <h2 className="text-xl font-bold">
                     Select DSPs
                   </h2>
@@ -1264,10 +1580,10 @@ async function openDSPSelector(
                     {selectedRelease.artist_name ||
                       "Unknown Artist"}
                   </p>
-
                 </div>
 
                 <button
+                  type="button"
                   onClick={() =>
                     setSelectedRelease(
                       null
@@ -1277,16 +1593,12 @@ async function openDSPSelector(
                 >
                   ✕
                 </button>
-
               </div>
-
             </div>
 
-
-            {/* MODAL CONTENT */}
+            {/* CONTENT */}
 
             <div className="p-6">
-
               {loadingDSPs ? (
                 <div className="p-10 text-center text-zinc-500">
                   Loading DSPs...
@@ -1294,10 +1606,8 @@ async function openDSPSelector(
               ) : (
                 <>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-
                     {DSP_LIST.map(
                       (dsp) => {
-
                         const selected =
                           selectedDSPs.includes(
                             dsp
@@ -1306,16 +1616,17 @@ async function openDSPSelector(
                         const alreadySaved =
                           existingDSPs.some(
                             (item) =>
-                              (
-                                item.dsp_name ||
-                                item.dsp ||
-                                item.platform
-                              ) === dsp
+                              getDSPName(
+                                item
+                              ) ===
+                              dsp
                           );
 
                         return (
                           <button
-                            key={dsp}
+                            key={
+                              dsp
+                            }
                             type="button"
                             disabled={
                               alreadySaved
@@ -1329,27 +1640,24 @@ async function openDSPSelector(
                               alreadySaved
                                 ? "cursor-not-allowed border-green-500/20 bg-green-500/5 opacity-60"
                                 : selected
-                                ? "border-blue-500 bg-blue-500/10"
-                                : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5"
+                                  ? "border-blue-500 bg-blue-500/10"
+                                  : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5"
                             }`}
                           >
-
                             <div>
-
                               <p className="font-medium">
-                                {dsp}
+                                {
+                                  dsp
+                                }
                               </p>
 
                               <p className="mt-1 text-xs text-zinc-600">
-
                                 {alreadySaved
                                   ? "Already selected"
                                   : selected
-                                  ? "Selected"
-                                  : "Available"}
-
+                                    ? "Selected"
+                                    : "Available"}
                               </p>
-
                             </div>
 
                             <span
@@ -1365,25 +1673,20 @@ async function openDSPSelector(
                                 ? "✓"
                                 : ""}
                             </span>
-
                           </button>
                         );
                       }
                     )}
-
                   </div>
 
-
-                  {/* SELECT ALL */}
+                  {/* QUICK ACTIONS */}
 
                   <div className="mt-6 flex flex-wrap gap-3">
-
                     <button
                       type="button"
-                      onClick={() =>
-                        setSelectedDSPs(
-                          DSP_LIST
-                        )}
+                      onClick={
+                        selectAllDSPs
+                      }
                       className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs hover:bg-white/10"
                     >
                       Select All
@@ -1391,42 +1694,29 @@ async function openDSPSelector(
 
                     <button
                       type="button"
-                      onClick={() =>
-                        setSelectedDSPs(
-                          existingDSPs
-                            .map(
-                              (item) =>
-                                item.dsp_name ||
-                                item.dsp ||
-                                item.platform
-                            )
-                            .filter(
-                              Boolean
-                            ) as string[]
-                        )}
+                      onClick={
+                        clearNewDSPSelection
+                      }
                       className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs hover:bg-white/10"
                     >
-                      Clear New Selection
+                      Clear New
+                      Selection
                     </button>
-
                   </div>
 
-
-                  {/* MODAL FOOTER */}
+                  {/* FOOTER */}
 
                   <div className="mt-6 flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
-
                     <div className="text-sm text-zinc-400">
-
                       <span className="font-semibold text-white">
-                        {selectedDSPs.length}
+                        {
+                          selectedDSPs.length
+                        }
                       </span>{" "}
                       DSPs selected
-
                     </div>
 
                     <div className="flex gap-3">
-
                       <button
                         type="button"
                         onClick={() =>
@@ -1441,7 +1731,9 @@ async function openDSPSelector(
 
                       <button
                         type="button"
-                        onClick={saveDSPs}
+                        onClick={
+                          saveDSPs
+                        }
                         disabled={
                           savingDSPs ||
                           selectedDSPs.length ===
@@ -1453,57 +1745,133 @@ async function openDSPSelector(
                           ? "Saving..."
                           : "Save DSP Selection"}
                       </button>
-
                     </div>
-
                   </div>
-
                 </>
               )}
-
             </div>
-
           </div>
-
         </div>
       )}
-
     </main>
   );
 }
 
+/* ======================================================
+   HELPERS
+====================================================== */
 
-// ==========================================
-// STATUS CLASS
-// ==========================================
+function getDSPName(
+  item: DSPDelivery
+) {
+  return String(
+    item.dsp_name ||
+      item.dsp ||
+      item.platform ||
+      ""
+  ).trim();
+}
+
+function normalizeStatus(
+  status?: string | null
+) {
+  return String(
+    status || "draft"
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function formatStatus(
+  value?: string | null
+) {
+  return String(
+    value || "draft"
+  )
+    .replace(
+      /_/g,
+      " "
+    )
+    .toUpperCase();
+}
+
+function formatDate(
+  value?: string | null
+) {
+  if (!value) {
+    return "—";
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date.toLocaleDateString(
+    "en-IN"
+  );
+}
+
+/* ======================================================
+   STATUS STYLE
+====================================================== */
 
 function statusClass(
   status?: string | null
 ) {
   const value =
-    String(status || "").toLowerCase();
+    normalizeStatus(
+      status
+    );
 
   if (
     value === "live" ||
-    value === "approved" ||
-    value === "delivered" ||
-    value === "success"
+    value === "delivered"
   ) {
     return "bg-green-500/10 text-green-400 border-green-500/20";
   }
 
   if (
+    value === "approved"
+  ) {
+    return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
+  }
+
+  if (
+    value === "needs_docs"
+  ) {
+    return "bg-orange-500/10 text-orange-300 border-orange-500/20";
+  }
+
+  if (
     value === "rejected" ||
     value === "reject" ||
-    value === "takedown" ||
     value === "failed"
   ) {
     return "bg-red-500/10 text-red-400 border-red-500/20";
   }
 
   if (
+    value === "takedown" ||
+    value ===
+      "takedown_pending" ||
+    value ===
+      "takedown_complete"
+  ) {
+    return "bg-red-500/10 text-red-300 border-red-500/20";
+  }
+
+  if (
     value === "pending" ||
-    value === "under_review" ||
+    value === "in_review" ||
+    value ===
+      "under_review" ||
     value === "processing"
   ) {
     return "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
@@ -1518,10 +1886,9 @@ function statusClass(
   return "bg-blue-500/10 text-blue-400 border-blue-500/20";
 }
 
-
-// ==========================================
-// STAT
-// ==========================================
+/* ======================================================
+   STAT
+====================================================== */
 
 function Stat({
   label,
@@ -1532,7 +1899,6 @@ function Stat({
 }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-[#0d1224] p-5">
-
       <p className="text-sm text-zinc-500">
         {label}
       </p>
@@ -1540,7 +1906,6 @@ function Stat({
       <p className="mt-2 text-3xl font-bold">
         {value}
       </p>
-
     </div>
   );
 }
