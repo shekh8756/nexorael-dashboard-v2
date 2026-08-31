@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import { convertWavToFlac } from "@/lib/audio-to-flac";
 
 type TrackInput = {
   title: string;
@@ -1533,17 +1534,56 @@ export default function NewReleasePage() {
          */
 
         const requestedIsrc =
-          track.auto_isrc
-            ? ""
-            : track.isrc.trim();
+  track.auto_isrc
+    ? ""
+    : track.isrc.trim();
 
-        alert(
-          `Uploading track ${
-            i + 1
-          } of ${
-            normalizedTracks.length
-          } directly to Too Lost...`
-        );
+/*
+ * =========================================
+ * WAV -> FLAC
+ * =========================================
+ */
+
+alert(
+  `Converting track ${
+    i + 1
+  } of ${
+    normalizedTracks.length
+  } from WAV to FLAC...`
+);
+
+const flacFile =
+  await convertWavToFlac(
+    track.audio
+  );
+
+console.log(
+  "FLAC conversion complete:",
+  {
+    originalName:
+      track.audio.name,
+
+    originalSize:
+      track.audio.size,
+
+    flacName:
+      flacFile.name,
+
+    flacSize:
+      flacFile.size,
+
+    type:
+      flacFile.type,
+  }
+);
+
+alert(
+  `Uploading track ${
+    i + 1
+  } of ${
+    normalizedTracks.length
+  } directly to Too Lost...`
+);
 
         /*
          * =========================================
@@ -1563,17 +1603,15 @@ export default function NewReleasePage() {
               },
 
               body: JSON.stringify({
-                releaseId:
-                  tooLostReleaseId,
+  releaseId:
+    tooLostReleaseId,
 
-                fileName:
-                  getTooLostAudioFileName(
-                    track.audio
-                  ),
+  fileName:
+    flacFile.name,
 
-                contentType:
-                  "audio/wav",
-              }),
+  contentType:
+    "audio/flac",
+}),
             }
           );
 
@@ -1684,8 +1722,8 @@ export default function NewReleasePage() {
 
         if (!hasContentType) {
           directHeaders[
-            "Content-Type"
-          ] = "audio/wav";
+  "Content-Type"
+] = "audio/flac";
         }
 
         const directUploadResponse =
@@ -1700,7 +1738,7 @@ export default function NewReleasePage() {
                 directHeaders,
 
               body:
-                track.audio,
+  flacFile,
             }
           );
 

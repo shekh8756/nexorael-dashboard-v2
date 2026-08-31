@@ -42,15 +42,13 @@ function findUploadData(value: any): {
 
   if (uploadUrl || fileKey) {
     return {
-      uploadUrl:
-        uploadUrl
-          ? String(uploadUrl)
-          : undefined,
+      uploadUrl: uploadUrl
+        ? String(uploadUrl)
+        : undefined,
 
-      fileKey:
-        fileKey
-          ? String(fileKey)
-          : undefined,
+      fileKey: fileKey
+        ? String(fileKey)
+        : undefined,
 
       method:
         value.method ??
@@ -67,8 +65,7 @@ function findUploadData(value: any): {
   }
 
   for (const key of Object.keys(value)) {
-    const child =
-      value[key];
+    const child = value[key];
 
     if (
       child &&
@@ -102,7 +99,6 @@ export async function POST(
     const {
       releaseId,
       fileName,
-      contentType,
     } = body;
 
     if (!releaseId) {
@@ -127,14 +123,43 @@ export async function POST(
       );
     }
 
+    /*
+     * =========================================
+     * TOO LOST AUDIO FILE NAME
+     * =========================================
+     *
+     * Too Lost upload-url expects FLAC format.
+     */
+
+    const baseName =
+      String(fileName)
+        .replace(/\.[^.]+$/, "")
+        .normalize("NFKD")
+        .replace(/[^\x00-\x7F]/g, "")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+
+    const tooLostFileName =
+      `${baseName || "audio"}.flac`;
+
     console.log(
       "Requesting Too Lost upload URL:",
       {
         releaseId,
-        fileName,
-        contentType,
+        originalFileName:
+          fileName,
+        tooLostFileName,
+        contentType:
+          "audio/flac",
       }
     );
+
+    /*
+     * =========================================
+     * REQUEST PRESIGNED URL FROM TOO LOST
+     * =========================================
+     */
 
     const result =
       await tooLostApi(
@@ -154,11 +179,11 @@ export async function POST(
           body: JSON.stringify({
             kind: "audio",
 
-            fileName,
+            fileName:
+              tooLostFileName,
 
             contentType:
-              contentType ||
-              "audio/wav",
+              "audio/flac",
           }),
         }
       );
@@ -178,10 +203,11 @@ export async function POST(
     );
 
     /*
-     * If Too Lost itself rejected request,
-     * return their real response instead of
-     * hiding it behind generic error.
+     * =========================================
+     * TOO LOST ERROR
+     * =========================================
      */
+
     if (!result.response.ok) {
       const tooLostData =
         result.data as any;
@@ -211,6 +237,12 @@ export async function POST(
         }
       );
     }
+
+    /*
+     * =========================================
+     * NORMALIZE PRESIGNED URL RESPONSE
+     * =========================================
+     */
 
     const upload =
       findUploadData(
@@ -264,6 +296,12 @@ export async function POST(
       );
     }
 
+    /*
+     * =========================================
+     * SUCCESS
+     * =========================================
+     */
+
     return NextResponse.json({
       success: true,
 
@@ -281,6 +319,12 @@ export async function POST(
 
       headers:
         upload.headers || {},
+
+      fileName:
+        tooLostFileName,
+
+      contentType:
+        "audio/flac",
     });
   } catch (error) {
     console.error(
