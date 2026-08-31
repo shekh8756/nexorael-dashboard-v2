@@ -1502,203 +1502,297 @@ export default function NewReleasePage() {
 
       /*
        * =========================================
-       * UPLOAD TRACKS
+       * UPLOAD TRACKS DIRECTLY TO TOO LOST
        * =========================================
        */
 
       for (
         let i = 0;
-        i <
-        normalizedTracks.length;
+        i < normalizedTracks.length;
         i++
       ) {
         const track =
-          normalizedTracks[
-            i
-          ];
+          normalizedTracks[i];
 
-        if (
-          !track.audio
-        ) {
+        if (!track.audio) {
           throw new Error(
-            `Track ${
-              i + 1
-            } audio missing.`
+            `Track ${i + 1} audio missing.`
           );
         }
 
-        if (
-          !track.composer
-        ) {
+        if (!track.composer) {
           throw new Error(
-            `Track ${
-              i + 1
-            } composer missing.`
+            `Track ${i + 1} composer missing.`
           );
         }
 
-        alert(
-          `Uploading track ${
-            i + 1
-          } of ${
-            normalizedTracks.length
-          } to Supabase...`
-        );
-
-        const audioUrl =
-          await uploadFile(
-            "release-audio",
-            track.audio
-          );
-
-        alert(
-          `Uploading track ${
-            i + 1
-          } of ${
-            normalizedTracks.length
-          } to Too Lost...`
-        );
+        /*
+         * =========================================
+         * REQUESTED ISRC
+         * =========================================
+         */
 
         const requestedIsrc =
           track.auto_isrc
             ? ""
             : track.isrc.trim();
 
+        alert(
+          `Uploading track ${
+            i + 1
+          } of ${
+            normalizedTracks.length
+          } directly to Too Lost...`
+        );
+
         /*
-         * =======================================
-         * SERVER AUDIO UPLOAD
-         * =======================================
+         * =========================================
+         * 1. GET TOO LOST PRESIGNED UPLOAD URL
+         * =========================================
          */
 
-        const serverUploadResponse =
+        const uploadUrlResponse =
           await fetch(
-            "/api/toolost/upload-audio",
+            "/api/toolost/upload-url",
             {
-              method:
-                "POST",
+              method: "POST",
 
               headers: {
                 "Content-Type":
                   "application/json",
               },
 
-              body:
-                JSON.stringify({
-                  releaseId:
-                    tooLostReleaseId,
+              body: JSON.stringify({
+                releaseId:
+                  tooLostReleaseId,
 
-                  fileName:
-                    getTooLostAudioFileName(
-                      track.audio
-                    ),
+                fileName:
+                  getTooLostAudioFileName(
+                    track.audio
+                  ),
 
-                  contentType:
-                    "audio/wav",
-
-                  audioUrl,
-
-                  track: {
-                    title:
-                      track.title.trim(),
-
-                    artist:
-                      mainArtist,
-
-                    isrc:
-                      requestedIsrc ||
-                      undefined,
-
-                    composer:
-                      track.composer.trim(),
-
-                    lyricist:
-                      track.lyricist.trim(),
-
-                    producer:
-                      track.producer.trim(),
-
-                    publisher:
-                      track.publisher.trim(),
-
-                    version:
-                      track.version.trim(),
-
-                    /*
-                     * ALWAYS RELEASE LANGUAGE
-                     */
-                    language:
-                      language,
-
-                    contentType:
-                      track.content_type ||
-                      "original",
-
-                    explicit:
-                      track.explicit,
-                  },
-                }),
+                contentType:
+                  "audio/wav",
+              }),
             }
           );
 
-        const serverText =
-          await serverUploadResponse.text();
+        const uploadUrlText =
+          await uploadUrlResponse.text();
 
-        let serverData: any;
+        let uploadUrlData: any;
 
         try {
-          serverData =
+          uploadUrlData =
             JSON.parse(
-              serverText
+              uploadUrlText
             );
         } catch {
           throw new Error(
-            `Track upload returned non-JSON (${serverUploadResponse.status}).`
+            `Too Lost upload-url returned non-JSON (${uploadUrlResponse.status}).`
           );
         }
 
         if (
-          !serverUploadResponse.ok ||
-          !serverData.success
+          !uploadUrlResponse.ok ||
+          !uploadUrlData?.success
         ) {
           throw new Error(
-            serverData.error ||
-              serverData
-                .tooLostResponse
-                ?.message ||
-              JSON.stringify(
-                serverData
-              )
+            uploadUrlData?.error ||
+              `Unable to prepare track ${
+                i + 1
+              } upload.`
+          );
+        }
+
+        if (
+          !uploadUrlData.uploadUrl ||
+          !uploadUrlData.fileKey
+        ) {
+          throw new Error(
+            `Too Lost upload URL or fileKey missing for track ${
+              i + 1
+            }.`
           );
         }
 
         /*
-         * =======================================
+         * =========================================
+         * 2. DIRECT BROWSER -> TOO LOST STORAGE
+         *
+         * AUDIO DOES NOT GO TO SUPABASE.
+         * =========================================
+         */
+
+        const directHeaders: Record<
+          string,
+          string
+        > = {};
+
+        if (
+          uploadUrlData.headers &&
+          typeof uploadUrlData.headers ===
+            "object"
+        ) {
+          for (
+            const [
+              key,
+              value,
+            ] of Object.entries(
+              uploadUrlData.headers
+            )
+          ) {
+            if (
+              typeof value ===
+              "string"
+            ) {
+              directHeaders[key] =
+                value;
+            }
+          }
+        }
+
+        const hasContentType =
+          Object.keys(
+            directHeaders
+          ).some(
+            (key) =>
+              key.toLowerCase() ===
+              "content-type"
+          );
+
+        if (!hasContentType) {
+          directHeaders[
+            "Content-Type"
+          ] = "audio/wav";
+        }
+
+        const directUploadResponse =
+          await fetch(
+            uploadUrlData.uploadUrl,
+            {
+              method:
+                uploadUrlData.method ||
+                "PUT",
+
+              headers:
+                directHeaders,
+
+              body:
+                track.audio,
+            }
+          );
+
+        if (
+          !directUploadResponse.ok
+        ) {
+          const directUploadText =
+            await directUploadResponse.text();
+
+          console.error(
+            "Too Lost direct audio upload failed:",
+            directUploadResponse.status,
+            directUploadText
+          );
+
+          throw new Error(
+            `Track ${
+              i + 1
+            } direct audio upload failed (${directUploadResponse.status}).`
+          );
+        }
+
+        /*
+         * =========================================
+         * 3. ATTACH FILE KEY TO TOO LOST TRACK
+         * =========================================
+         */
+
+        const finalizeResponse =
+          await fetch(
+            "/api/toolost/finalize-track",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                releaseId:
+                  tooLostReleaseId,
+
+                title:
+                  track.title.trim(),
+
+                fileKey:
+                  uploadUrlData.fileKey,
+
+                trackNumber:
+                  i + 1,
+              }),
+            }
+          );
+
+        const finalizeText =
+          await finalizeResponse.text();
+
+        let finalizeData: any;
+
+        try {
+          finalizeData =
+            JSON.parse(
+              finalizeText
+            );
+        } catch {
+          throw new Error(
+            `Too Lost finalize-track returned non-JSON (${finalizeResponse.status}).`
+          );
+        }
+
+        if (
+          !finalizeResponse.ok ||
+          !finalizeData?.success
+        ) {
+          throw new Error(
+            finalizeData?.error ||
+              finalizeData?.data
+                ?.message ||
+              `Unable to attach audio for track ${
+                i + 1
+              }.`
+          );
+        }
+
+        /*
+         * =========================================
          * ISRC
-         * =======================================
+         *
+         * If Too Lost returns an ISRC use it.
+         * Otherwise keep manually supplied ISRC.
+         * =========================================
          */
 
         const actualIsrc =
+          finalizeData?.data?.isrc ||
+          finalizeData?.track?.isrc ||
           requestedIsrc ||
-          serverData.data
-            ?.isrc ||
-          serverData.track
-            ?.isrc ||
           null;
 
         /*
-         * =======================================
-         * SAVE TRACK TO SUPABASE
-         * =======================================
+         * =========================================
+         * SAVE TRACK METADATA TO SUPABASE
+         *
+         * Audio binary is NOT stored in Supabase.
+         * =========================================
          */
 
         const {
-          error:
-            trackError,
+          error: trackError,
         } =
           await supabase
-            .from(
-              "tracks"
-            )
+            .from("tracks")
             .insert({
               release_id:
                 releaseData.id,
@@ -1723,8 +1817,11 @@ export default function NewReleasePage() {
                   ? track.previous_isrc.trim()
                   : null,
 
+              /*
+               * No Supabase audio object.
+               */
               audio_url:
-                audioUrl,
+                null,
 
               track_number:
                 i + 1,
@@ -1747,9 +1844,6 @@ export default function NewReleasePage() {
               version:
                 track.version.trim(),
 
-              /*
-               * SAME LANGUAGE AS RELEASE
-               */
               language:
                 language,
 
@@ -1757,13 +1851,10 @@ export default function NewReleasePage() {
                 track.content_type,
 
               toolost_file_key:
-                serverData.fileKey ||
-                null,
+                uploadUrlData.fileKey,
             });
 
-        if (
-          trackError
-        ) {
+        if (trackError) {
           throw trackError;
         }
       }
