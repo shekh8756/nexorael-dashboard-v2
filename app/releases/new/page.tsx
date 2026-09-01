@@ -1725,20 +1725,44 @@ export default function NewReleasePage() {
                   "application/json",
               },
 
-              body:
-                JSON.stringify({
-                  releaseId:
-                    tooLostReleaseId,
+              body: JSON.stringify({
+  releaseId:
+    tooLostReleaseId,
 
-                  title:
-                    track.title.trim(),
+  title:
+    track.title.trim(),
 
-                  fileKey:
-                    tooLostFileKey,
+  fileKey:
+    tooLostFileKey,
 
-                  trackNumber:
-                    i + 1,
-                }),
+  trackNumber:
+    i + 1,
+
+  artist:
+    mainArtist,
+
+  composer:
+    track.composer.trim(),
+
+  lyricist:
+    track.lyricist.trim(),
+
+  language,
+
+  contentType:
+    track.content_type,
+
+  explicit:
+    track.explicit,
+
+  isrc:
+    requestedIsrc ||
+    undefined,
+
+  version:
+    track.version.trim() ||
+    undefined,
+}),
             }
           );
 

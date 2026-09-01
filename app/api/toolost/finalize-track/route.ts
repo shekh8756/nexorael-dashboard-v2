@@ -1,29 +1,90 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getTooLostMasterAccessToken } from "@/lib/toolost-master";
-import { tooLostApi } from "@/lib/toolost";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
+import {
+  getTooLostMasterAccessToken,
+} from "@/lib/toolost-master";
+
+import {
+  tooLostApi,
+} from "@/lib/toolost";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+/*
+ * =========================================
+ * UNWRAP TOO LOST RESPONSE
+ * =========================================
+ */
+
+function unwrap(value: any) {
+  return (
+    value?.data?.data ??
+    value?.data ??
+    value
+  );
+}
+
+/*
+ * =========================================
+ * POST
+ * =========================================
+ */
+
+export async function POST(
+  request: NextRequest
+) {
   try {
     const accessToken =
       await getTooLostMasterAccessToken();
 
-    const body = await request.json();
+    const body =
+      await request.json();
 
     const {
       releaseId,
       title,
       fileKey,
       trackNumber,
+
+      artist,
+      composer,
+      lyricist,
+      writer,
+
+      language,
+      contentType,
+      explicit,
+      isrc,
+      version,
     } = body;
+
+    /*
+     * =========================================
+     * VALIDATION
+     * =========================================
+     */
 
     if (!releaseId) {
       return NextResponse.json(
         {
           success: false,
-          error: "releaseId is required",
+          error:
+            "releaseId is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!title) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Track title is required.",
         },
         { status: 400 }
       );
@@ -33,191 +94,562 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "fileKey is required",
+          error:
+            "fileKey is required.",
         },
         { status: 400 }
       );
     }
 
-    const tracksResult =
-      await tooLostApi(
-        accessToken,
-        `/releases/${releaseId}/tracks`,
-        {
-          method: "GET",
-        }
-      );
-
-    if (!tracksResult.response.ok) {
+    if (!artist) {
       return NextResponse.json(
         {
           success: false,
-          step: "get_tracks",
-          status:
-            tracksResult.response.status,
-          data:
-            tracksResult.data,
-        },
-        {
-          status:
-            tracksResult.response.status,
-        }
-      );
-    }
-
-    const tracksResponse =
-      tracksResult.data as any;
-
-    const tracks =
-      Array.isArray(
-        tracksResponse?.data
-      )
-        ? tracksResponse.data
-        : Array.isArray(
-            tracksResponse
-          )
-        ? tracksResponse
-        : [];
-
-    if (tracks.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          step: "get_tracks",
           error:
-            "No track exists in this release.",
-          data:
-            tracksResult.data,
+            "Track artist is required.",
         },
         { status: 400 }
       );
     }
 
     /*
-     * Track selection priority:
-     * 1. trackNumber from frontend
-     * 2. matching title
-     * 3. fallback first track
+     * =========================================
+     * ARTISTS
+     * =========================================
      */
 
-    let track: any = null;
+    const artists = [
+      {
+        name:
+          String(artist).trim(),
+
+        role: [
+          "primary",
+        ],
+      },
+    ];
+
+    /*
+     * =========================================
+     * WRITERS
+     * =========================================
+     */
+
+    const writers: any[] =
+      [];
 
     if (
-      Number.isInteger(
-        Number(trackNumber)
-      ) &&
-      Number(trackNumber) > 0
+      composer &&
+      String(composer).trim()
     ) {
-      track =
-        tracks[
-          Number(trackNumber) - 1
-        ] || null;
+      writers.push({
+        name:
+          String(
+            composer
+          ).trim(),
+
+        role: [
+          "composer",
+        ],
+      });
     }
 
     if (
-      !track &&
-      title
+      lyricist &&
+      String(lyricist).trim()
     ) {
-      track =
-        tracks.find(
+      writers.push({
+        name:
+          String(
+            lyricist
+          ).trim(),
+
+        role: [
+          "lyricist",
+        ],
+      });
+    }
+
+    if (
+      writer &&
+      String(writer).trim()
+    ) {
+      writers.push({
+        name:
+          String(
+            writer
+          ).trim(),
+
+        role: [
+          "writer",
+        ],
+      });
+    }
+
+    /*
+     * Too Lost requires at least
+     * one writer.
+     *
+     * Composer is required by our
+     * dashboard anyway, but keep a
+     * safe fallback.
+     */
+
+    if (
+      writers.length === 0
+    ) {
+      writers.push({
+        name:
+          String(
+            artist
+          ).trim(),
+
+        role: [
+          "writer",
+        ],
+      });
+    }
+
+    /*
+     * =========================================
+     * GET EXISTING TRACKS
+     * =========================================
+     */
+
+    const existingResult =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks`,
+
+        {
+          method:
+            "GET",
+        }
+      );
+
+    let existingTracks =
+      unwrap(
+        existingResult.data
+      );
+
+    if (
+      !Array.isArray(
+        existingTracks
+      )
+    ) {
+      existingTracks =
+        [];
+    }
+
+    const index =
+      Math.max(
+        Number(
+          trackNumber || 1
+        ) - 1,
+        0
+      );
+
+    let existingTrack =
+      existingTracks[
+        index
+      ];
+
+    /*
+     * Title fallback.
+     */
+
+    if (!existingTrack) {
+      existingTrack =
+        existingTracks.find(
           (item: any) =>
             String(
-              item?.title || ""
+              item?.title ||
+                ""
             )
               .trim()
               .toLowerCase() ===
-            String(
-              title
-            )
+            String(title)
               .trim()
               .toLowerCase()
-        ) || null;
+        );
     }
 
+    /*
+     * =========================================
+     * BUILD TRACK PAYLOAD
+     * =========================================
+     */
+
+    const trackPayload:
+      Record<
+        string,
+        unknown
+      > = {
+      title:
+        String(
+          title
+        ).trim(),
+
+      language:
+        language ||
+        "English",
+
+      content_type:
+        contentType ||
+        "original",
+
+      explicit:
+        Boolean(
+          explicit
+        ),
+
+      /*
+       * Too Lost requires this
+       * while creating track.
+       */
+      audioFileKey:
+        fileKey,
+
+      artists,
+
+      writers,
+    };
+
+    if (
+      existingTrack?.id
+    ) {
+      trackPayload.id =
+        existingTrack.id;
+    }
+
+    if (
+      isrc &&
+      String(isrc).trim()
+    ) {
+      trackPayload.isrc =
+        String(
+          isrc
+        ).trim();
+    }
+
+    if (
+      version &&
+      String(version).trim()
+    ) {
+      trackPayload.version =
+        String(
+          version
+        ).trim();
+    }
+
+    console.log(
+      "Creating/updating Too Lost track:",
+      JSON.stringify(
+        trackPayload,
+        null,
+        2
+      )
+    );
+
+    /*
+     * =========================================
+     * CREATE / UPDATE TRACK
+     * =========================================
+     */
+
+    const metadataResult =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks`,
+
+        {
+          method:
+            "PUT",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Accept:
+              "application/json",
+          },
+
+          body:
+            JSON.stringify({
+              tracks: [
+                trackPayload,
+              ],
+            }),
+        }
+      );
+
+    console.log(
+      "Too Lost track metadata status:",
+      metadataResult
+        .response.status
+    );
+
+    console.log(
+      "Too Lost track metadata response:",
+      JSON.stringify(
+        metadataResult.data
+      )
+    );
+
+    if (
+      !metadataResult
+        .response.ok
+    ) {
+      const errorData =
+        metadataResult.data as any;
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "track_metadata",
+
+          status:
+            metadataResult
+              .response.status,
+
+          error:
+            errorData?.message ||
+            errorData?.error ||
+            "Too Lost rejected track metadata.",
+
+          tooLostResponse:
+            metadataResult.data,
+        },
+
+        {
+          status:
+            metadataResult
+              .response.status,
+        }
+      );
+    }
+
+    /*
+     * =========================================
+     * FETCH TRACK AGAIN
+     * =========================================
+     */
+
+    const refreshedResult =
+      await tooLostApi(
+        accessToken,
+
+        `/releases/${releaseId}/tracks`,
+
+        {
+          method:
+            "GET",
+        }
+      );
+
+    let refreshedTracks =
+      unwrap(
+        refreshedResult.data
+      );
+
+    if (
+      !Array.isArray(
+        refreshedTracks
+      )
+    ) {
+      refreshedTracks =
+        [];
+    }
+
+    let track =
+      refreshedTracks[
+        index
+      ];
+
     if (!track) {
-      track = tracks[0];
+      track =
+        refreshedTracks.find(
+          (item: any) =>
+            String(
+              item?.title ||
+                ""
+            )
+              .trim()
+              .toLowerCase() ===
+            String(title)
+              .trim()
+              .toLowerCase()
+        );
+    }
+
+    /*
+     * Last fallback only for
+     * single-track releases.
+     */
+
+    if (
+      !track &&
+      refreshedTracks.length ===
+        1
+    ) {
+      track =
+        refreshedTracks[0];
     }
 
     const trackId =
       track?.id;
 
     if (!trackId) {
+      console.error(
+        "Too Lost tracks after creation:",
+        JSON.stringify(
+          refreshedTracks
+        )
+      );
+
       return NextResponse.json(
         {
           success: false,
+
+          step:
+            "find_created_track",
+
           error:
-            "Track ID was not returned.",
-          selectedTrack:
-            track,
-          tracks,
+            "Too Lost did not return a track ID after track creation.",
+
+          tooLostResponse:
+            refreshedResult.data,
         },
-        { status: 400 }
+
+        { status: 502 }
       );
     }
 
-    const updateResult =
+    /*
+     * =========================================
+     * ATTACH AUDIO FILE
+     * =========================================
+     */
+
+    const attachResult =
       await tooLostApi(
         accessToken,
+
         `/releases/${releaseId}/tracks/${trackId}/file`,
+
         {
-          method: "PATCH",
+          method:
+            "PATCH",
+
           headers: {
             "Content-Type":
               "application/json",
+
+            Accept:
+              "application/json",
           },
+
           body:
             JSON.stringify({
-              kind: "audio",
+              kind:
+                "audio",
+
               fileKey,
             }),
         }
       );
 
-    return NextResponse.json(
-      {
-        success:
-          updateResult.response.ok,
-
-        status:
-          updateResult.response.status,
-
-        data:
-          updateResult.data,
-
-        releaseId,
-
-        trackId,
-
-        trackNumber:
-          trackNumber || null,
-
-        title:
-          title || null,
-
-        selectedTrack:
-          track,
-      },
-      {
-        status:
-          updateResult.response.ok
-            ? 200
-            : updateResult.response.status,
-      }
+    console.log(
+      "Too Lost attach audio status:",
+      attachResult
+        .response.status
     );
+
+    console.log(
+      "Too Lost attach response:",
+      JSON.stringify(
+        attachResult.data
+      )
+    );
+
+    if (
+      !attachResult.response.ok
+    ) {
+      const errorData =
+        attachResult.data as any;
+
+      return NextResponse.json(
+        {
+          success: false,
+
+          step:
+            "attach_file",
+
+          status:
+            attachResult
+              .response.status,
+
+          error:
+            errorData?.message ||
+            errorData?.error ||
+            "Too Lost rejected audio attachment.",
+
+          tooLostResponse:
+            attachResult.data,
+
+          trackId,
+
+          fileKey,
+        },
+
+        {
+          status:
+            attachResult
+              .response.status,
+        }
+      );
+    }
+
+    /*
+     * =========================================
+     * SUCCESS
+     * =========================================
+     */
+
+    return NextResponse.json({
+      success: true,
+
+      releaseId,
+
+      trackId,
+
+      fileKey,
+
+      track,
+
+      data:
+        attachResult.data,
+    });
   } catch (error) {
     console.error(
-      "Too Lost finalize track error:",
+      "Too Lost finalize-track error:",
       error
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
-            : "Failed to finalize track",
+            : "Failed to finalize Too Lost track.",
       },
+
       { status: 500 }
     );
   }
