@@ -40,9 +40,31 @@ type Release = {
   toolost_review_note?: string | null;
 
   uploaded_by_name?: string | null;
-  uploaded_by_email?: string | null;
+uploaded_by_email?: string | null;
 
-  white_label_name?: string | null;
+/*
+ * Admin API normalized fields
+ */
+user_name?: string | null;
+user_email?: string | null;
+
+user?: {
+  id?: string | null;
+  name?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  status?: string | null;
+} | null;
+
+white_label_name?: string | null;
+
+white_label?: {
+  id?: string | null;
+  name?: string | null;
+  brand_name?: string | null;
+  status?: string | null;
+} | null;
 
   [key: string]: any;
 };
@@ -989,17 +1011,22 @@ export default function AdminReleasesPage() {
                 searchText
               ) ||
             String(
-              release.uploaded_by_name ||
-                ""
-            )
+  release.user_name ||
+    release.user?.name ||
+    release.user?.full_name ||
+    release.uploaded_by_name ||
+    ""
+)
               .toLowerCase()
               .includes(
                 searchText
               ) ||
             String(
-              release.uploaded_by_email ||
-                ""
-            )
+  release.user_email ||
+    release.user?.email ||
+    release.uploaded_by_email ||
+    ""
+)
               .toLowerCase()
               .includes(
                 searchText
@@ -1341,22 +1368,83 @@ export default function AdminReleasesPage() {
                           {/* LABEL / USER */}
 
                           <td className="px-5 py-5">
-                            <div className="text-sm text-zinc-300">
-                              {release.white_label_name ||
-                                release.label_name ||
-                                "Nexorael Direct"}
-                            </div>
+  {(() => {
+    const submitterName =
+      release.user_name ||
+      release.user?.name ||
+      release.user?.full_name ||
+      release.uploaded_by_name ||
+      "Unknown User";
 
-                            <div className="mt-1 text-xs text-zinc-600">
-                              {release.uploaded_by_name ||
-                                "-"}
-                            </div>
+    const submitterEmail =
+      release.user_email ||
+      release.user?.email ||
+      release.uploaded_by_email ||
+      "—";
 
-                            <div className="text-xs text-zinc-600">
-                              {release.uploaded_by_email ||
-                                "-"}
-                            </div>
-                          </td>
+    const accountName =
+      release.white_label_name ||
+      release.white_label?.name ||
+      release.white_label?.brand_name ||
+      "Nexorael Direct";
+
+    const isWhiteLabel =
+      Boolean(
+        release.white_label_id
+      );
+
+    return (
+      <div className="min-w-[220px]">
+        {/* ACCOUNT / WHITE LABEL */}
+
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+              isWhiteLabel
+                ? "border-purple-500/20 bg-purple-500/10 text-purple-300"
+                : "border-blue-500/20 bg-blue-500/10 text-blue-300"
+            }`}
+          >
+            {isWhiteLabel
+              ? "WHITE LABEL"
+              : "DIRECT ACCOUNT"}
+          </span>
+        </div>
+
+        <div className="mt-2 text-sm font-semibold text-white">
+          {accountName}
+        </div>
+
+        {/* WHO SUBMITTED */}
+
+        <div className="mt-2 border-t border-white/5 pt-2">
+          <div className="text-[10px] uppercase tracking-wider text-zinc-600">
+            Submitted By
+          </div>
+
+          <div className="mt-1 text-xs font-medium text-zinc-300">
+            {submitterName}
+          </div>
+
+          <div className="mt-0.5 text-[11px] text-zinc-600">
+            {submitterEmail}
+          </div>
+        </div>
+
+        {/* RELEASE LABEL */}
+
+        {release.label_name && (
+          <div className="mt-2 text-[11px] text-zinc-500">
+            Release Label:{" "}
+            <span className="text-zinc-400">
+              {release.label_name}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  })()}
+</td>
 
                           {/* TOO LOST ID */}
 
