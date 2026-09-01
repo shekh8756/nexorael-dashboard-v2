@@ -1,2750 +1,2942 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-
-import {
-  useRouter,
-} from "next/navigation";
-
-import {
-  supabase,
-} from "../../lib/supabase";
-
-type Release = {
-  id: string;
-  title?: string | null;
-  artist_name?: string | null;
-  artwork_url?: string | null;
-  cover_url?: string | null;
-  upc?: string | null;
-  status?: string | null;
-  created_at?: string | null;
-};
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
+import { useRouter } from "next/navigation";
 
 export default function DashboardPage() {
-  const router =
-    useRouter();
+  const router = useRouter();
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<any>(null);
+  const [whiteLabel, setWhiteLabel] = useState<any>(null);
+  const [recentReleases, setRecentReleases] = useState<any[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
-  const [
-    releases,
-    setReleases,
-  ] =
-    useState<Release[]>([]);
-
-  const [
-    userName,
-    setUserName,
-  ] =
-    useState("Artist");
-
-  const [
-    sidebarOpen,
-    setSidebarOpen,
-  ] =
-    useState(true);
-
-  /*
-   * =========================================
-   * LOAD DASHBOARD
-   * =========================================
-   */
+  const [statsData, setStatsData] = useState({
+    totalReleases: 0,
+    pendingReleases: 0,
+    approvedReleases: 0,
+    liveReleases: 0,
+    rejectedReleases: 0,
+    totalUsers: 0,
+    totalWhiteLabels: 0,
+    totalRevenue: 0,
+  });
 
   useEffect(() => {
-    loadDashboard();
+    checkUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadDashboard() {
-    try {
-      setLoading(true);
+  /*
+   * =========================================================
+   * AUTH LOGIC - SAME AS YOUR OLD WORKING VERSION
+   * =========================================================
+   */
 
-      const {
-        data: userData,
-      } =
-        await supabase.auth.getUser();
+  async function checkUser() {
+    const { data } = await supabase.auth.getUser();
 
-      const user =
-        userData?.user;
-
-      if (!user) {
-        router.push(
-          "/login"
-        );
-
-        return;
-      }
-
-      /*
-       * PROFILE
-       */
-
-      const {
-        data: profile,
-      } =
-        await supabase
-          .from("profiles")
-          .select(
-            "full_name,email"
-          )
-          .eq(
-            "id",
-            user.id
-          )
-          .maybeSingle();
-
-      setUserName(
-        profile?.full_name ||
-          profile?.email ||
-          user.email ||
-          "Artist"
-      );
-
-      /*
-       * RELEASES
-       */
-
-      const {
-        data,
-        error,
-      } =
-        await supabase
-          .from("releases")
-          .select(
-            "id,title,artist_name,artwork_url,cover_url,upc,status,created_at"
-          )
-          .eq(
-            "user_id",
-            user.id
-          )
-          .order(
-            "created_at",
-            {
-              ascending:
-                false,
-            }
-          );
-
-      if (error) {
-        console.error(
-          "Dashboard releases error:",
-          error
-        );
-      }
-
-      setReleases(
-        data || []
-      );
-    } catch (error) {
-      console.error(
-        "Dashboard error:",
-        error
-      );
-    } finally {
-      setLoading(false);
+    if (!data.user) {
+      router.push("/login");
+      return;
     }
+
+    const { data: userProfile, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", data.user.id)
+      .single();
+
+    if (error || !userProfile) {
+      alert("Profile not found.");
+      router.push("/login");
+      return;
+    }
+
+    if (userProfile.status === "blocked") {
+      alert("Your account is blocked.");
+      await supabase.auth.signOut();
+      router.push("/login");
+      return;
+    }
+
+    setProfile(userProfile);
+
+    if (userProfile.white_label_id) {
+      const { data: wl } = await supabase
+        .from("white_labels")
+        .select("*")
+        .eq("id", userProfile.white_label_id)
+        .single();
+
+      setWhiteLabel(wl || null);
+    }
+
+    await loadDashboardStats(data.user.id, userProfile);
+    await loadNotificationCount(data.user.id);
+
+    setLoading(false);
   }
 
   /*
-   * =========================================
-   * STATISTICS
-   * =========================================
+   * =========================================================
+   * DASHBOARD DATA - SAME OLD LOGIC
+   * =========================================================
    */
 
-  const stats =
-    useMemo(() => {
-      function status(
-        value:
-          string | null |
-          undefined
-      ) {
-        return String(
-          value || ""
-        )
-          .toLowerCase()
-          .replace(
-            /[\s-]+/g,
-            "_"
-          );
-      }
+  async function loadDashboardStats(userId: string, userProfile: any) {
+    let releasesQuery = supabase
+      .from("releases")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-      const pending =
-        releases.filter(
-          (release) =>
-            [
-              "pending",
-              "pending_review",
-              "under_review",
-              "submitted",
-              "processing",
-            ].includes(
-              status(
-                release.status
-              )
-            )
-        ).length;
+    let royaltiesQuery = supabase.from("royalties").select("*");
 
-      const approved =
-        releases.filter(
-          (release) =>
-            status(
-              release.status
-            ) ===
-            "approved"
-        ).length;
+    if (userProfile.role === "master_admin") {
+      // Master admin sees all data
+    } else if (userProfile.white_label_id) {
+      releasesQuery = releasesQuery.eq(
+        "white_label_id",
+        userProfile.white_label_id
+      );
 
-      const live =
-        releases.filter(
-          (release) =>
-            [
-              "live",
-              "delivered",
-            ].includes(
-              status(
-                release.status
-              )
-            )
-        ).length;
+      royaltiesQuery = royaltiesQuery.eq("user_id", userId);
+    } else {
+      releasesQuery = releasesQuery.eq("user_id", userId);
+      royaltiesQuery = royaltiesQuery.eq("user_id", userId);
+    }
 
-      const rejected =
-        releases.filter(
-          (release) =>
-            [
-              "rejected",
-              "failed",
-            ].includes(
-              status(
-                release.status
-              )
-            )
-        ).length;
+    const { data: releases, error: releasesError } = await releasesQuery;
+    const { data: royalties } = await royaltiesQuery;
 
-      return {
-        total:
-          releases.length,
+    if (releasesError) {
+      alert(releasesError.message);
+      return;
+    }
 
-        pending,
-        approved,
-        live,
-        rejected,
-      };
-    }, [
-      releases,
-    ]);
+    const allReleases = releases || [];
+
+    let totalUsers = 0;
+    let totalWhiteLabels = 0;
+
+    if (userProfile.role === "master_admin") {
+      const { count: usersCount } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true });
+
+      const { count: whiteLabelsCount } = await supabase
+        .from("white_labels")
+        .select("*", { count: "exact", head: true });
+
+      totalUsers = usersCount || 0;
+      totalWhiteLabels = whiteLabelsCount || 0;
+    } else if (userProfile.role === "white_label_admin") {
+      const { count: usersCount } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true })
+        .eq("white_label_id", userProfile.white_label_id);
+
+      totalUsers = usersCount || 0;
+      totalWhiteLabels = 1;
+    }
+
+    const totalRevenue =
+      royalties?.reduce(
+        (sum, item) => sum + Number(item.revenue || 0),
+        0
+      ) || 0;
+
+    setStatsData({
+      totalReleases: allReleases.length,
+
+      pendingReleases: allReleases.filter(
+        (r) => r.status === "submitted"
+      ).length,
+
+      approvedReleases: allReleases.filter(
+        (r) => r.status === "approved"
+      ).length,
+
+      liveReleases: allReleases.filter(
+        (r) => r.status === "live"
+      ).length,
+
+      rejectedReleases: allReleases.filter(
+        (r) => r.status === "rejected"
+      ).length,
+
+      totalUsers,
+      totalWhiteLabels,
+      totalRevenue,
+    });
+
+    setRecentReleases(allReleases.slice(0, 5));
+  }
+
+  async function loadNotificationCount(userId: string) {
+    const { count } = await supabase
+      .from("notifications")
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .eq("user_id", userId)
+      .eq("is_read", false);
+
+    setUnreadNotifications(count || 0);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
+
+  function goTo(path: string) {
+    router.push(path);
+  }
 
   /*
-   * =========================================
-   * STATUS
-   * =========================================
+   * =========================================================
+   * LOADING
+   * =========================================================
    */
 
-  function getStatusClass(
-    value?: string | null
-  ) {
-    const status =
-      String(
-        value || "draft"
-      )
-        .toLowerCase();
+  if (loading) {
+    return (
+      <main style={loadingStyle}>
+        <div style={loadingLogo}>N</div>
 
-    if (
-      status.includes(
-        "live"
-      )
-    ) {
-      return "status live";
-    }
+        <div style={loader} />
 
-    if (
-      status.includes(
-        "reject"
-      ) ||
-      status.includes(
-        "failed"
-      )
-    ) {
-      return "status rejected";
-    }
+        <h2 style={{ margin: "5px 0" }}>
+          Loading Nexorael
+        </h2>
 
-    if (
-      status.includes(
-        "approve"
-      )
-    ) {
-      return "status approved";
-    }
-
-    if (
-      status.includes(
-        "pending"
-      ) ||
-      status.includes(
-        "review"
-      ) ||
-      status.includes(
-        "submit"
-      )
-    ) {
-      return "status pending";
-    }
-
-    return "status draft";
+        <p
+          style={{
+            color: "#64748B",
+            margin: 0,
+            fontSize: "13px",
+          }}
+        >
+          Preparing your distribution dashboard...
+        </p>
+      </main>
+    );
   }
+
+  /*
+   * =========================================================
+   * DASHBOARD LABELS
+   * =========================================================
+   */
+
+  const dashboardTitle =
+    profile?.role === "master_admin"
+      ? "Nexorael Master Dashboard"
+      : profile?.role === "white_label_admin"
+      ? `${
+          whiteLabel?.name ||
+          whiteLabel?.brand_name ||
+          "White Label"
+        } Dashboard`
+      : "My Distribution Dashboard";
+
+  const dashboardSubtitle =
+    profile?.role === "master_admin"
+      ? "Manage all users, releases, approvals, royalties and white-label operations."
+      : profile?.role === "white_label_admin"
+      ? "Manage your white-label users, releases and approval workflow."
+      : "Manage releases, analytics, royalties and your music catalog.";
+
+  const roleLabel =
+    profile?.role === "master_admin"
+      ? "Master Admin"
+      : profile?.role === "white_label_admin"
+      ? "White Label Admin"
+      : "Label User";
+
+  /*
+   * =========================================================
+   * STATS
+   * =========================================================
+   */
+
+  const stats = [
+    {
+      title: "Total Releases",
+      value: statsData.totalReleases,
+      note: "Catalog releases",
+      icon: "♫",
+      accent: "#3B82F6",
+      glow: "rgba(59,130,246,.18)",
+    },
+
+    {
+      title: "Pending Review",
+      value: statsData.pendingReleases,
+      note: "Waiting for QC",
+      icon: "◷",
+      accent: "#F59E0B",
+      glow: "rgba(245,158,11,.15)",
+    },
+
+    {
+      title: "Approved",
+      value: statsData.approvedReleases,
+      note: "Ready for delivery",
+      icon: "✓",
+      accent: "#8B5CF6",
+      glow: "rgba(139,92,246,.17)",
+    },
+
+    {
+      title: "Live Releases",
+      value: statsData.liveReleases,
+      note: "Available on DSPs",
+      icon: "◎",
+      accent: "#10B981",
+      glow: "rgba(16,185,129,.15)",
+    },
+
+    {
+      title: "Rejected",
+      value: statsData.rejectedReleases,
+      note: "Needs attention",
+      icon: "!",
+      accent: "#F43F5E",
+      glow: "rgba(244,63,94,.15)",
+    },
+
+    {
+      title: "Total Revenue",
+      value: `$${statsData.totalRevenue.toFixed(2)}`,
+      note: "Estimated royalties",
+      icon: "$",
+      accent: "#06B6D4",
+      glow: "rgba(6,182,212,.16)",
+    },
+
+    {
+      title: "Users",
+      value: statsData.totalUsers,
+      note: "Managed users",
+      icon: "♙",
+      accent: "#A855F7",
+      glow: "rgba(168,85,247,.16)",
+    },
+
+    {
+      title: "White Labels",
+      value: statsData.totalWhiteLabels,
+      note: "Partner labels",
+      icon: "◇",
+      accent: "#22D3EE",
+      glow: "rgba(34,211,238,.13)",
+    },
+  ];
+
+  /*
+   * =========================================================
+   * NAVIGATION - SAME ROUTES
+   * =========================================================
+   */
+
+  const navItems = [
+    {
+      icon: "⌂",
+      label: "Dashboard",
+      path: "/dashboard",
+    },
+    {
+      icon: "♫",
+      label: "Releases",
+      path: "/releases",
+    },
+    {
+      icon: "▥",
+      label: "Analytics",
+      path: "/analytics",
+    },
+    {
+      icon: "$",
+      label: "Royalties",
+      path: "/royalties",
+    },
+    {
+      icon: "↗",
+      label: "Withdrawals",
+      path: "/payments",
+    },
+    {
+      icon: "✦",
+      label: "Support",
+      path: "/support",
+    },
+    {
+      icon: "⚙",
+      label: "Settings",
+      path: "/settings",
+    },
+  ];
+
+  const adminItems =
+    profile?.role === "master_admin" ||
+    profile?.role === "white_label_admin"
+      ? [
+          {
+            icon: "♙",
+            label: "Users",
+            path: "/admin/users",
+          },
+
+          {
+            icon: "✓",
+            label: "Approvals",
+            path: "/admin/releases",
+          },
+
+          {
+            icon: "◉",
+            label: "Support Tickets",
+            path: "/admin/support",
+          },
+
+          {
+            icon: "$",
+            label: "Royalties",
+            path: "/admin/royalties",
+          },
+
+          {
+            icon: "↗",
+            label: "Withdrawals",
+            path: "/admin/withdrawals",
+          },
+
+          {
+            icon: "▥",
+            label: "Admin Analytics",
+            path: "/admin/analytics",
+          },
+
+          {
+            icon: "⇧",
+            label: "Bulk Upload",
+            path: "/admin/bulk-upload",
+          },
+
+          {
+            icon: "◈",
+            label: "DSP Delivery",
+            path: "/admin/delivery",
+          },
+
+          {
+            icon: "▤",
+            label: "Contracts",
+            path: "/admin/contracts",
+          },
+
+          ...(profile?.role === "master_admin"
+            ? [
+                {
+                  icon: "◇",
+                  label: "White Labels",
+                  path: "/admin/white-labels",
+                },
+              ]
+            : []),
+        ]
+      : [];
+
+  /*
+   * =========================================================
+   * UI
+   * =========================================================
+   */
 
   return (
-    <div className="app">
-      {/* ======================================
+    <div style={pageWrapper}>
+      {/* ===================================================
           SIDEBAR
-      ====================================== */}
+      =================================================== */}
 
-      <aside
-        className={
-          sidebarOpen
-            ? "sidebar"
-            : "sidebar collapsed"
-        }
-      >
-        <div className="brand">
-          <div className="brandIcon">
-            N
+      <aside style={sidebarStyle}>
+        <div>
+          <div style={brandArea}>
+            <div style={logoBox}>
+              {whiteLabel?.name
+                ? whiteLabel.name.charAt(0).toUpperCase()
+                : "N"}
+            </div>
+
+            <div>
+              <h2 style={brandName}>
+                {whiteLabel?.name ||
+                  whiteLabel?.brand_name ||
+                  "NEXORAEL"}
+              </h2>
+
+              <p style={brandSubtitle}>
+                Music Distribution
+              </p>
+            </div>
           </div>
 
-          {sidebarOpen && (
-            <div>
-              <div className="brandName">
-                NEXORAEL
-              </div>
+          <div style={navList}>
+            {navItems.map((item) => {
+              const active =
+                item.path === "/dashboard";
 
-              <div className="brandSub">
-                Music Distribution
+              return (
+                <div
+                  key={item.label}
+                  onClick={() =>
+                    goTo(item.path)
+                  }
+                  style={{
+                    ...navItem,
+
+                    ...(active
+                      ? activeNavItem
+                      : {}),
+                  }}
+                >
+                  <span
+                    style={{
+                      ...navIcon,
+
+                      color: active
+                        ? "#60A5FA"
+                        : "#64748B",
+                    }}
+                  >
+                    {item.icon}
+                  </span>
+
+                  <span>
+                    {item.label}
+                  </span>
+
+                  {active && (
+                    <div
+                      style={
+                        activeIndicator
+                      }
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {adminItems.length > 0 && (
+            <>
+              <div style={divider} />
+
+              <p style={sectionTitle}>
+                ADMIN CONTROL
+              </p>
+
+              <div style={navList}>
+                {adminItems.map(
+                  (item) => (
+                    <div
+                      key={item.label}
+                      onClick={() =>
+                        goTo(
+                          item.path
+                        )
+                      }
+                      style={navItem}
+                    >
+                      <span
+                        style={
+                          navIcon
+                        }
+                      >
+                        {
+                          item.icon
+                        }
+                      </span>
+
+                      <span>
+                        {
+                          item.label
+                        }
+                      </span>
+                    </div>
+                  )
+                )}
               </div>
-            </div>
+            </>
           )}
         </div>
 
-        <nav className="nav">
-          <NavItem
-            icon="⌂"
-            label="Dashboard"
-            active
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/dashboard"
-              )
-            }
-          />
+        {/* SIDEBAR PROFILE */}
 
-          <NavItem
-            icon="♫"
-            label="Releases"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/releases"
-              )
-            }
-          />
+        <div>
+          <div style={sidebarPromo}>
+            <div style={promoGlow} />
 
-          <NavItem
-            icon="▥"
-            label="Analytics"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/analytics"
-              )
-            }
-          />
-
-          <NavItem
-            icon="◉"
-            label="Royalties"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/royalties"
-              )
-            }
-          />
-
-          <NavItem
-            icon="↗"
-            label="Withdrawals"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/withdrawals"
-              )
-            }
-          />
-
-          <NavItem
-            icon="✦"
-            label="Support"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/support"
-              )
-            }
-          />
-
-          <div className="navDivider" />
-
-          <NavItem
-            icon="⚙"
-            label="Settings"
-            collapsed={
-              !sidebarOpen
-            }
-            onClick={() =>
-              router.push(
-                "/settings"
-              )
-            }
-          />
-        </nav>
-
-        {sidebarOpen && (
-          <div className="sidebarCard">
-            <div className="sidebarGlow" />
-
-            <span>
+            <span style={promoSmall}>
               NEXORAEL
             </span>
 
-            <strong>
-              Music Distribution
-            </strong>
+            <h4 style={promoTitle}>
+              Your music.
+              <br />
+              Global stage.
+            </h4>
 
-            <small>
-              Deliver your music
-              worldwide.
-            </small>
+            <p style={promoText}>
+              We handle the distribution.
+              You create the sound.
+            </p>
           </div>
-        )}
+
+          <div style={profileBox}>
+            <div style={profileAvatar}>
+              {(
+                profile?.full_name ||
+                profile?.email ||
+                "U"
+              )
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <p style={profileName}>
+                {profile?.full_name ||
+                  profile?.email ||
+                  "User"}
+              </p>
+
+              <p style={profileRole}>
+                {roleLabel}
+              </p>
+            </div>
+
+            <button
+              onClick={
+                handleLogout
+              }
+              style={
+                logoutIconButton
+              }
+              title="Logout"
+            >
+              ↪
+            </button>
+          </div>
+        </div>
       </aside>
 
-      {/* ======================================
-          CONTENT
-      ====================================== */}
+      {/* ===================================================
+          MAIN
+      =================================================== */}
 
-      <main className="main">
+      <main style={mainStyle}>
         {/* HEADER */}
 
-        <header className="header">
-          <div className="headerLeft">
-            <button
-              className="menuButton"
-              onClick={() =>
-                setSidebarOpen(
-                  !sidebarOpen
-                )
-              }
-            >
-              ☰
-            </button>
-
-            <div>
-              <div className="welcome">
-                Welcome back
-              </div>
-
-              <h1>
-                {userName}
-              </h1>
+        <div style={headerStyle}>
+          <div>
+            <div style={headerBadge}>
+              MUSIC DISTRIBUTION
             </div>
+
+            <h1 style={dashboardHeading}>
+              {dashboardTitle}
+            </h1>
+
+            <p style={dashboardDescription}>
+              {dashboardSubtitle}
+            </p>
           </div>
 
-          <div className="headerActions">
+          <div style={headerButtons}>
             <button
-              className="notificationButton"
               onClick={() =>
                 router.push(
                   "/notifications"
                 )
               }
+              style={
+                notificationButton
+              }
             >
-              <span>
-                🔔
+              <span style={{ fontSize: 15 }}>
+                ♢
               </span>
 
-              <span className="desktopOnly">
-                Notifications
-              </span>
+              Notifications
+
+              {unreadNotifications >
+                0 && (
+                <span style={notificationBadge}>
+                  {
+                    unreadNotifications
+                  }
+                </span>
+              )}
             </button>
 
             <button
-              className="newReleaseButton"
               onClick={() =>
                 router.push(
                   "/releases/new"
                 )
               }
+              style={newReleaseButton}
             >
-              <span>
-                ＋
-              </span>
-
-              New Release
+              ＋ New Release
             </button>
           </div>
-        </header>
+        </div>
 
-        {/* HERO */}
+        {/* ===================================================
+            HERO
+        =================================================== */}
 
-        <section className="hero">
-          <div className="heroGlow glowOne" />
-          <div className="heroGlow glowTwo" />
+        <section style={heroCard}>
+          <div style={heroGlowBlue} />
+          <div style={heroGlowPurple} />
 
-          <div className="heroContent">
-            <span className="heroBadge">
+          <div style={heroContent}>
+            <span style={heroMiniBadge}>
               NEXORAEL MUSIC
             </span>
 
-            <h2>
+            <h2 style={heroTitle}>
               Your music.
               <br />
 
-              <span>
+              <span style={heroGradientText}>
                 Everywhere.
               </span>
             </h2>
 
-            <p>
-              Manage releases,
-              distribution,
-              royalties and
-              performance from one
-              powerful dashboard.
+            <p style={heroDescription}>
+              Release, manage and monitor
+              your entire music catalog
+              from one powerful
+              distribution workspace.
             </p>
 
-            <div className="heroActions">
+            <div style={heroButtons}>
               <button
                 onClick={() =>
                   router.push(
                     "/releases/new"
                   )
                 }
+                style={heroPrimaryButton}
               >
-                Upload New Release
+                Upload Release
                 <span>
                   →
                 </span>
               </button>
 
               <button
-                className="secondaryHero"
                 onClick={() =>
                   router.push(
                     "/releases"
                   )
                 }
+                style={heroSecondaryButton}
               >
                 View Catalog
               </button>
             </div>
           </div>
 
-          <div className="heroVisual">
-            <div className="musicDisc">
-              <div className="discRing">
-                <div className="discCenter">
+          <div style={heroVisual}>
+            <div style={recordDisc}>
+              <div style={recordInner}>
+                <div style={recordCenter}>
                   N
                 </div>
               </div>
             </div>
 
-            <div className="floatingCard cardOne">
-              <small>
-                Catalog
-              </small>
+            <div style={floatingStatOne}>
+              <span style={floatingLabel}>
+                RELEASES
+              </span>
 
-              <strong>
-                {stats.total}
+              <strong style={floatingValue}>
+                {
+                  statsData.totalReleases
+                }
               </strong>
 
-              <span>
-                Total Releases
+              <span style={floatingText}>
+                Total Catalog
               </span>
             </div>
 
-            <div className="floatingCard cardTwo">
-              <small>
-                Distribution
-              </small>
+            <div style={floatingStatTwo}>
+              <span style={floatingLabel}>
+                LIVE
+              </span>
 
-              <strong>
-                250+
+              <strong style={floatingValue}>
+                {
+                  statsData.liveReleases
+                }
               </strong>
 
-              <span>
-                Global Stores
+              <span style={floatingText}>
+                On DSPs
               </span>
             </div>
           </div>
         </section>
 
-        {/* STAT CARDS */}
+        {/* ===================================================
+            STATS
+        =================================================== */}
 
-        <section className="statsGrid">
-          <MetricCard
-            title="Total Releases"
-            value={
-              stats.total
-            }
-            subtitle="Your complete catalog"
-            icon="♫"
-            type="blue"
-          />
+        <div style={statsGrid}>
+          {stats.map(
+            (stat) => (
+              <div
+                key={
+                  stat.title
+                }
+                style={{
+                  ...statCard,
 
-          <MetricCard
-            title="Pending Review"
-            value={
-              stats.pending
-            }
-            subtitle="Waiting for review"
-            icon="◷"
-            type="orange"
-          />
+                  boxShadow: `0 15px 40px ${stat.glow}`,
+                }}
+              >
+                <div style={statTop}>
+                  <p style={statTitle}>
+                    {stat.title}
+                  </p>
 
-          <MetricCard
-            title="Approved"
-            value={
-              stats.approved
-            }
-            subtitle="Ready for delivery"
-            icon="✓"
-            type="purple"
-          />
+                  <div
+                    style={{
+                      ...statIcon,
 
-          <MetricCard
-            title="Live Releases"
-            value={
-              stats.live
-            }
-            subtitle="Available worldwide"
-            icon="◎"
-            type="green"
-          />
+                      color:
+                        stat.accent,
 
-          <MetricCard
-            title="Rejected"
-            value={
-              stats.rejected
-            }
-            subtitle="Needs your attention"
-            icon="!"
-            type="red"
-          />
+                      background:
+                        `${stat.accent}18`,
 
-          <MetricCard
-            title="Total Revenue"
-            value="$0.00"
-            subtitle="Estimated royalties"
-            icon="$"
-            type="cyan"
-          />
-        </section>
+                      border:
+                        `1px solid ${stat.accent}25`,
+                    }}
+                  >
+                    {stat.icon}
+                  </div>
+                </div>
 
-        {/* MAIN GRID */}
+                <h2 style={statValue}>
+                  {stat.value}
+                </h2>
 
-        <section className="dashboardGrid">
-          {/* RELEASE TABLE */}
+                <p style={statNote}>
+                  {stat.note}
+                </p>
 
-          <div className="panel releasesPanel">
-            <div className="panelHeader">
+                <div
+                  style={{
+                    ...statAccent,
+
+                    background:
+                      stat.accent,
+                  }}
+                />
+              </div>
+            )
+          )}
+        </div>
+
+        {/* ===================================================
+            CONTENT
+        =================================================== */}
+
+        <div style={contentGrid}>
+          {/* RECENT RELEASES */}
+
+          <section style={panelStyle}>
+            <div style={panelHeader}>
               <div>
-                <span className="eyebrow">
+                <p style={panelEyebrow}>
                   CATALOG
-                </span>
+                </p>
 
-                <h3>
+                <h2 style={panelTitle}>
                   Recent Releases
-                </h3>
+                </h2>
 
-                <p>
-                  Latest music
-                  submitted through
-                  Nexorael.
+                <p style={panelDescription}>
+                  Your latest submitted
+                  music catalog.
                 </p>
               </div>
 
               <button
-                className="textButton"
                 onClick={() =>
                   router.push(
                     "/releases"
                   )
                 }
+                style={viewAllButton}
               >
                 View all →
               </button>
             </div>
 
-            {loading ? (
-              <div className="emptyState">
-                <div className="loader" />
+            <div style={tableWrapper}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse:
+                    "collapse",
+                }}
+              >
+                <thead>
+                  <tr style={tableHeaderRow}>
+                    <th style={thStyle}>
+                      RELEASE
+                    </th>
 
-                <span>
-                  Loading your catalog...
-                </span>
-              </div>
-            ) : releases.length ===
-              0 ? (
-              <div className="emptyState">
-                <div className="emptyIcon">
-                  ♫
-                </div>
+                    <th style={thStyle}>
+                      ARTIST
+                    </th>
 
-                <h4>
-                  No releases yet
-                </h4>
+                    <th style={thStyle}>
+                      UPC
+                    </th>
 
-                <p>
-                  Upload your first
-                  release to start your
-                  catalog.
-                </p>
+                    <th style={thStyle}>
+                      STATUS
+                    </th>
 
-                <button
-                  onClick={() =>
-                    router.push(
-                      "/releases/new"
-                    )
-                  }
-                >
-                  Create Release
-                </button>
-              </div>
-            ) : (
-              <div className="tableWrapper">
-                <table>
-                  <thead>
+                    <th style={thStyle}>
+                      ACTION
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {recentReleases.length ===
+                  0 ? (
                     <tr>
-                      <th>
-                        Release
-                      </th>
+                      <td
+                        style={emptyTableCell}
+                        colSpan={5}
+                      >
+                        <div style={emptyMusicIcon}>
+                          ♫
+                        </div>
 
-                      <th>
-                        Artist
-                      </th>
+                        <h3
+                          style={{
+                            margin:
+                              "10px 0 4px",
+                          }}
+                        >
+                          No releases yet
+                        </h3>
 
-                      <th>
-                        UPC
-                      </th>
+                        <p
+                          style={{
+                            color:
+                              "#64748B",
+                            margin:
+                              "0 0 14px",
+                          }}
+                        >
+                          Upload your first
+                          release to begin
+                          distribution.
+                        </p>
 
-                      <th>
-                        Status
-                      </th>
-
-                      <th />
+                        <button
+                          onClick={() =>
+                            router.push(
+                              "/releases/new"
+                            )
+                          }
+                          style={
+                            newReleaseButton
+                          }
+                        >
+                          ＋ New Release
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
+                  ) : (
+                    recentReleases.map(
+                      (release) => {
+                        const artwork =
+                          release.artwork_url ||
+                          release.cover_url;
 
-                  <tbody>
-                    {releases
-                      .slice(
-                        0,
-                        6
-                      )
-                      .map(
-                        (
-                          release
-                        ) => {
-                          const artwork =
-                            release.artwork_url ||
-                            release.cover_url;
+                        const releaseStatus =
+                          String(
+                            release.status ||
+                              "draft"
+                          ).toLowerCase();
 
-                          return (
-                            <tr
-                              key={
-                                release.id
-                              }
-                            >
-                              <td>
-                                <div className="releaseCell">
-                                  {artwork ? (
-                                    <img
-                                      src={
-                                        artwork
-                                      }
-                                      alt=""
-                                    />
-                                  ) : (
-                                    <div className="artFallback">
-                                      ♫
-                                    </div>
-                                  )}
-
-                                  <div>
-                                    <strong>
-                                      {release.title ||
-                                        "Untitled"}
-                                    </strong>
-
-                                    <span>
-                                      Digital
-                                      Release
-                                    </span>
+                        return (
+                          <tr
+                            key={
+                              release.id
+                            }
+                            style={
+                              tableRow
+                            }
+                          >
+                            <td style={tdStyle}>
+                              <div style={releaseCell}>
+                                {artwork ? (
+                                  <img
+                                    src={
+                                      artwork
+                                    }
+                                    alt="Artwork"
+                                    style={
+                                      artworkThumb
+                                    }
+                                  />
+                                ) : (
+                                  <div style={emptyArtwork}>
+                                    ♫
                                   </div>
-                                </div>
-                              </td>
+                                )}
 
-                              <td>
+                                <div>
+                                  <p style={releaseTitle}>
+                                    {release.title ||
+                                      "Untitled Release"}
+                                  </p>
+
+                                  <p style={releaseTypeText}>
+                                    Digital Release
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td style={tdStyle}>
+                              <span style={normalCellText}>
                                 {release.artist_name ||
                                   "-"}
-                              </td>
+                              </span>
+                            </td>
 
-                              <td className="mono">
+                            <td style={tdStyle}>
+                              <span style={upcStyle}>
                                 {release.upc ||
                                   "Auto"}
-                              </td>
+                              </span>
+                            </td>
 
-                              <td>
+                            <td style={tdStyle}>
+                              <span
+                                style={{
+                                  ...statusStyle,
+
+                                  ...(releaseStatus ===
+                                  "live"
+                                    ? liveStatus
+                                    : releaseStatus ===
+                                      "approved"
+                                    ? approvedStatus
+                                    : releaseStatus ===
+                                      "submitted"
+                                    ? pendingStatus
+                                    : releaseStatus ===
+                                      "rejected"
+                                    ? rejectedStatus
+                                    : draftStatus),
+                                }}
+                              >
                                 <span
-                                  className={getStatusClass(
-                                    release.status
-                                  )}
-                                >
-                                  <span className="statusDot" />
+                                  style={{
+                                    ...statusDot,
 
-                                  {release.status ||
-                                    "Draft"}
-                                </span>
-                              </td>
+                                    background:
+                                      releaseStatus ===
+                                      "live"
+                                        ? "#10B981"
+                                        : releaseStatus ===
+                                          "approved"
+                                        ? "#8B5CF6"
+                                        : releaseStatus ===
+                                          "submitted"
+                                        ? "#F59E0B"
+                                        : releaseStatus ===
+                                          "rejected"
+                                        ? "#F43F5E"
+                                        : "#94A3B8",
+                                  }}
+                                />
 
-                              <td>
-                                <button
-                                  className="rowButton"
-                                  onClick={() =>
-                                    router.push(
-                                      `/releases/${release.id}`
-                                    )
-                                  }
-                                >
+                                {release.status ||
+                                  "draft"}
+                              </span>
+                            </td>
+
+                            <td style={tdStyle}>
+                              <button
+                                onClick={() =>
+                                  router.push(
+                                    `/releases/${release.id}`
+                                  )
+                                }
+                                style={viewButton}
+                              >
+                                View
+                                <span>
                                   →
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        }
-                      )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT COLUMN */}
-
-          <div className="rightColumn">
-            <div className="panel analyticsPanel">
-              <div className="panelHeader compact">
-                <div>
-                  <span className="eyebrow">
-                    PERFORMANCE
-                  </span>
-
-                  <h3>
-                    Catalog Health
-                  </h3>
-                </div>
-
-                <span className="healthNumber">
-                  {stats.total
-                    ? "100%"
-                    : "0%"}
-                </span>
-              </div>
-
-              <div className="healthRing">
-                <div
-                  className="healthRingInner"
-                  style={{
-                    "--progress":
-                      stats.total
-                        ? "100%"
-                        : "0%",
-                  } as React.CSSProperties}
-                >
-                  <div className="healthCenter">
-                    <strong>
-                      {stats.total}
-                    </strong>
-
-                    <span>
-                      Releases
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="analyticsRows">
-                <AnalyticsRow
-                  label="Live"
-                  value={
-                    stats.live
-                  }
-                  dot="greenDot"
-                />
-
-                <AnalyticsRow
-                  label="Pending"
-                  value={
-                    stats.pending
-                  }
-                  dot="orangeDot"
-                />
-
-                <AnalyticsRow
-                  label="Rejected"
-                  value={
-                    stats.rejected
-                  }
-                  dot="redDot"
-                />
-              </div>
+                                </span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                    )
+                  )}
+                </tbody>
+              </table>
             </div>
+          </section>
 
-            <div className="panel revenuePanel">
-              <span className="eyebrow">
-                ROYALTIES
-              </span>
+          {/* RIGHT SIDE */}
 
-              <div className="revenueTop">
+          <div style={rightColumn}>
+            {/* ANALYTICS */}
+
+            <section style={smallPanel}>
+              <div style={smallPanelHeader}>
                 <div>
-                  <p>
-                    Available Balance
+                  <p style={panelEyebrow}>
+                    PERFORMANCE
                   </p>
 
-                  <h3>
-                    $0.00
+                  <h3 style={smallPanelTitle}>
+                    Catalog Overview
                   </h3>
                 </div>
 
-                <div className="revenueIcon">
-                  $
+                <div style={analyticsIcon}>
+                  ▥
                 </div>
               </div>
 
-              <div className="revenueLine">
-                <span>
-                  Pending
-                </span>
+              <div style={analyticsBigBox}>
+                <p style={analyticsLabel}>
+                  Total Revenue
+                </p>
 
-                <strong>
-                  $0.00
-                </strong>
+                <h2 style={analyticsRevenue}>
+                  $
+                  {statsData.totalRevenue.toFixed(
+                    2
+                  )}
+                </h2>
+
+                <div style={fakeChart}>
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "22%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "42%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "34%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "58%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "45%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "68%",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      ...fakeBar,
+                      height: "84%",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={overviewRows}>
+                <OverviewRow
+                  title="Total Releases"
+                  value={
+                    statsData.totalReleases
+                  }
+                  color="#3B82F6"
+                />
+
+                <OverviewRow
+                  title="Pending Review"
+                  value={
+                    statsData.pendingReleases
+                  }
+                  color="#F59E0B"
+                />
+
+                <OverviewRow
+                  title="Approved"
+                  value={
+                    statsData.approvedReleases
+                  }
+                  color="#8B5CF6"
+                />
+
+                <OverviewRow
+                  title="Live Releases"
+                  value={
+                    statsData.liveReleases
+                  }
+                  color="#10B981"
+                />
               </div>
 
               <button
-                className="revenueButton"
                 onClick={() =>
                   router.push(
-                    "/royalties"
+                    "/analytics"
                   )
                 }
+                style={fullWidthButton}
               >
-                View Royalties
-                <span>
-                  →
-                </span>
+                View Analytics →
               </button>
-            </div>
+            </section>
+
+            {/* QUICK ACTION */}
+
+            <section style={quickActionPanel}>
+              <div style={quickActionGlow} />
+
+              <p style={panelEyebrow}>
+                QUICK ACTION
+              </p>
+
+              <h3 style={quickTitle}>
+                Ready for your
+                <br />
+                next release?
+              </h3>
+
+              <p style={quickDescription}>
+                Upload your master,
+                artwork and metadata to
+                start distribution.
+              </p>
+
+              <button
+                onClick={() =>
+                  router.push(
+                    "/releases/new"
+                  )
+                }
+                style={quickButton}
+              >
+                Upload Music →
+              </button>
+            </section>
           </div>
-        </section>
+        </div>
       </main>
-
-      <style jsx>{`
-        * {
-          box-sizing: border-box;
-        }
-
-        .app {
-          min-height: 100vh;
-          background:
-            radial-gradient(
-              circle at 80% 0%,
-              rgba(
-                59,
-                130,
-                246,
-                0.08
-              ),
-              transparent 30%
-            ),
-            radial-gradient(
-              circle at 30% 100%,
-              rgba(
-                124,
-                58,
-                237,
-                0.07
-              ),
-              transparent 35%
-            ),
-            #060914;
-
-          color: #f8fafc;
-          display: flex;
-          font-family:
-            Inter,
-            ui-sans-serif,
-            system-ui,
-            -apple-system,
-            BlinkMacSystemFont,
-            "Segoe UI",
-            sans-serif;
-        }
-
-        .sidebar {
-          width: 255px;
-          min-height: 100vh;
-          position: fixed;
-          inset: 0 auto 0 0;
-          padding: 24px 16px;
-          background:
-            linear-gradient(
-              180deg,
-              rgba(
-                12,
-                20,
-                37,
-                0.98
-              ),
-              rgba(
-                7,
-                12,
-                24,
-                0.98
-              )
-            );
-          border-right:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.1
-            );
-          z-index: 30;
-          transition: width 0.25s ease;
-        }
-
-        .sidebar.collapsed {
-          width: 86px;
-        }
-
-        .brand {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          height: 58px;
-          padding: 0 4px 20px;
-        }
-
-        .brandIcon {
-          width: 42px;
-          height: 42px;
-          flex-shrink: 0;
-          border-radius: 13px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 20px;
-          font-weight: 900;
-          color: white;
-          background:
-            linear-gradient(
-              135deg,
-              #2563eb,
-              #7c3aed
-            );
-          box-shadow:
-            0 10px 30px
-            rgba(
-              37,
-              99,
-              235,
-              0.3
-            );
-        }
-
-        .brandName {
-          font-size: 18px;
-          font-weight: 900;
-          letter-spacing: 0.5px;
-        }
-
-        .brandSub {
-          color: #64748b;
-          font-size: 10px;
-          margin-top: 2px;
-        }
-
-        .nav {
-          display: flex;
-          flex-direction: column;
-          gap: 5px;
-          margin-top: 25px;
-        }
-
-        .navDivider {
-          height: 1px;
-          background:
-            rgba(
-              148,
-              163,
-              184,
-              0.08
-            );
-          margin: 12px 5px;
-        }
-
-        .sidebarCard {
-          position: absolute;
-          overflow: hidden;
-          left: 16px;
-          right: 16px;
-          bottom: 22px;
-          padding: 16px;
-          border-radius: 16px;
-          border:
-            1px solid
-            rgba(
-              96,
-              165,
-              250,
-              0.16
-            );
-          background:
-            linear-gradient(
-              145deg,
-              rgba(
-                37,
-                99,
-                235,
-                0.13
-              ),
-              rgba(
-                124,
-                58,
-                237,
-                0.08
-              )
-            );
-        }
-
-        .sidebarGlow {
-          position: absolute;
-          width: 100px;
-          height: 100px;
-          right: -40px;
-          top: -40px;
-          border-radius: 50%;
-          background:
-            rgba(
-              59,
-              130,
-              246,
-              0.25
-            );
-          filter: blur(25px);
-        }
-
-        .sidebarCard span {
-          color: #60a5fa;
-          font-size: 10px;
-          font-weight: 800;
-        }
-
-        .sidebarCard strong,
-        .sidebarCard small {
-          display: block;
-        }
-
-        .sidebarCard strong {
-          font-size: 13px;
-          margin-top: 5px;
-        }
-
-        .sidebarCard small {
-          color: #64748b;
-          font-size: 10px;
-          line-height: 1.5;
-          margin-top: 7px;
-        }
-
-        .main {
-          width: 100%;
-          margin-left: 255px;
-          padding: 25px 30px 60px;
-          transition:
-            margin-left 0.25s ease;
-        }
-
-        .sidebar.collapsed + .main {
-          margin-left: 86px;
-        }
-
-        .header {
-          min-height: 68px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 24px;
-        }
-
-        .headerLeft {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .menuButton {
-          width: 40px;
-          height: 40px;
-          border-radius: 11px;
-          cursor: pointer;
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.12
-            );
-          background:
-            rgba(
-              15,
-              23,
-              42,
-              0.75
-            );
-          color: #94a3b8;
-          font-size: 18px;
-        }
-
-        .welcome {
-          color: #64748b;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 1.5px;
-          font-weight: 700;
-        }
-
-        .header h1 {
-          margin: 3px 0 0;
-          font-size: 22px;
-        }
-
-        .headerActions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .notificationButton,
-        .newReleaseButton {
-          min-height: 42px;
-          padding: 0 15px;
-          border-radius: 11px;
-          cursor: pointer;
-          font-weight: 700;
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.12
-            );
-        }
-
-        .notificationButton {
-          color: #cbd5e1;
-          background:
-            rgba(
-              15,
-              23,
-              42,
-              0.8
-            );
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-
-        .newReleaseButton {
-          color: white;
-          background:
-            linear-gradient(
-              135deg,
-              #2563eb,
-              #4f46e5
-            );
-          box-shadow:
-            0 8px 24px
-            rgba(
-              37,
-              99,
-              235,
-              0.22
-            );
-        }
-
-        .hero {
-          min-height: 290px;
-          overflow: hidden;
-          position: relative;
-          border-radius: 24px;
-          padding: 38px 42px;
-          display: flex;
-          align-items: center;
-          border:
-            1px solid
-            rgba(
-              96,
-              165,
-              250,
-              0.15
-            );
-          background:
-            linear-gradient(
-              115deg,
-              rgba(
-                15,
-                23,
-                42,
-                0.98
-              ),
-              rgba(
-                13,
-                23,
-                51,
-                0.96
-              ) 46%,
-              rgba(
-                30,
-                20,
-                63,
-                0.95
-              )
-            );
-          box-shadow:
-            0 25px 80px
-            rgba(
-              0,
-              0,
-              0,
-              0.22
-            );
-        }
-
-        .heroGlow {
-          position: absolute;
-          border-radius: 999px;
-          filter: blur(70px);
-        }
-
-        .glowOne {
-          width: 260px;
-          height: 260px;
-          right: 120px;
-          top: -100px;
-          background:
-            rgba(
-              37,
-              99,
-              235,
-              0.35
-            );
-        }
-
-        .glowTwo {
-          width: 200px;
-          height: 200px;
-          right: -40px;
-          bottom: -100px;
-          background:
-            rgba(
-              124,
-              58,
-              237,
-              0.34
-            );
-        }
-
-        .heroContent {
-          width: 55%;
-          position: relative;
-          z-index: 5;
-        }
-
-        .heroBadge,
-        .eyebrow {
-          display: inline-flex;
-          align-items: center;
-          color: #60a5fa;
-          font-size: 10px;
-          font-weight: 900;
-          letter-spacing: 1.5px;
-        }
-
-        .heroBadge {
-          padding: 6px 10px;
-          border-radius: 999px;
-          border:
-            1px solid
-            rgba(
-              96,
-              165,
-              250,
-              0.22
-            );
-          background:
-            rgba(
-              37,
-              99,
-              235,
-              0.09
-            );
-        }
-
-        .hero h2 {
-          margin: 15px 0 10px;
-          font-size: clamp(
-            34px,
-            4vw,
-            52px
-          );
-          line-height: 1.05;
-          letter-spacing: -2px;
-        }
-
-        .hero h2 span {
-          background:
-            linear-gradient(
-              90deg,
-              #60a5fa,
-              #a78bfa
-            );
-          -webkit-background-clip:
-            text;
-          -webkit-text-fill-color:
-            transparent;
-        }
-
-        .hero p {
-          max-width: 530px;
-          color: #94a3b8;
-          line-height: 1.7;
-          font-size: 14px;
-        }
-
-        .heroActions {
-          display: flex;
-          gap: 10px;
-          margin-top: 22px;
-        }
-
-        .heroActions button {
-          min-height: 44px;
-          border: 0;
-          border-radius: 11px;
-          padding: 0 17px;
-          cursor: pointer;
-          color: white;
-          font-weight: 800;
-          background:
-            linear-gradient(
-              135deg,
-              #2563eb,
-              #4f46e5
-            );
-        }
-
-        .heroActions button span {
-          margin-left: 8px;
-        }
-
-        .heroActions .secondaryHero {
-          background:
-            rgba(
-              15,
-              23,
-              42,
-              0.55
-            );
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.14
-            );
-        }
-
-        .heroVisual {
-          width: 45%;
-          align-self: stretch;
-          position: relative;
-          z-index: 3;
-        }
-
-        .musicDisc {
-          position: absolute;
-          width: 210px;
-          height: 210px;
-          right: 70px;
-          top: 5px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          background:
-            repeating-radial-gradient(
-              circle,
-              #111827 0px,
-              #111827 5px,
-              #172036 6px,
-              #172036 7px
-            );
-          box-shadow:
-            0 30px 70px
-            rgba(
-              0,
-              0,
-              0,
-              0.5
-            );
-        }
-
-        .discRing {
-          width: 65px;
-          height: 65px;
-          border-radius: 50%;
-          background:
-            linear-gradient(
-              135deg,
-              #2563eb,
-              #7c3aed
-            );
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .discCenter {
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          background: #070b14;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 10px;
-          font-weight: 900;
-        }
-
-        .floatingCard {
-          position: absolute;
-          min-width: 125px;
-          padding: 12px 14px;
-          border-radius: 14px;
-          backdrop-filter:
-            blur(12px);
-          border:
-            1px solid
-            rgba(
-              255,
-              255,
-              255,
-              0.09
-            );
-          background:
-            rgba(
-              8,
-              15,
-              30,
-              0.75
-            );
-          box-shadow:
-            0 15px 40px
-            rgba(
-              0,
-              0,
-              0,
-              0.25
-            );
-        }
-
-        .floatingCard small {
-          display: block;
-          color: #64748b;
-          font-size: 9px;
-        }
-
-        .floatingCard strong {
-          display: block;
-          font-size: 23px;
-          margin: 4px 0 1px;
-        }
-
-        .floatingCard span {
-          color: #94a3b8;
-          font-size: 9px;
-        }
-
-        .cardOne {
-          right: 250px;
-          bottom: 8px;
-        }
-
-        .cardTwo {
-          right: 2px;
-          top: 15px;
-        }
-
-        .statsGrid {
-          display: grid;
-          grid-template-columns:
-            repeat(
-              6,
-              minmax(
-                0,
-                1fr
-              )
-            );
-          gap: 13px;
-          margin-top: 18px;
-        }
-
-        .dashboardGrid {
-          display: grid;
-          grid-template-columns:
-            minmax(
-              0,
-              2fr
-            )
-            minmax(
-              280px,
-              0.75fr
-            );
-          gap: 18px;
-          margin-top: 18px;
-        }
-
-        .panel {
-          border-radius: 18px;
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.1
-            );
-          background:
-            linear-gradient(
-              145deg,
-              rgba(
-                17,
-                25,
-                44,
-                0.93
-              ),
-              rgba(
-                10,
-                16,
-                30,
-                0.95
-              )
-            );
-          box-shadow:
-            0 15px 55px
-            rgba(
-              0,
-              0,
-              0,
-              0.14
-            );
-        }
-
-        .releasesPanel {
-          min-height: 420px;
-          overflow: hidden;
-        }
-
-        .panelHeader {
-          padding: 22px 24px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.08
-            );
-        }
-
-        .panelHeader.compact {
-          border: none;
-          padding-bottom: 12px;
-        }
-
-        .panelHeader h3 {
-          font-size: 18px;
-          margin: 5px 0;
-        }
-
-        .panelHeader p {
-          margin: 0;
-          color: #64748b;
-          font-size: 11px;
-        }
-
-        .textButton {
-          background: none;
-          border: none;
-          color: #60a5fa;
-          cursor: pointer;
-          font-weight: 700;
-        }
-
-        .tableWrapper {
-          overflow-x: auto;
-          padding: 0 20px 20px;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-
-        th {
-          padding: 15px 10px;
-          color: #64748b;
-          font-size: 10px;
-          text-align: left;
-          text-transform: uppercase;
-          letter-spacing: 0.7px;
-        }
-
-        td {
-          padding: 13px 10px;
-          border-top:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.07
-            );
-          color: #cbd5e1;
-          font-size: 12px;
-        }
-
-        tr {
-          transition:
-            background 0.2s ease;
-        }
-
-        tbody tr:hover {
-          background:
-            rgba(
-              59,
-              130,
-              246,
-              0.035
-            );
-        }
-
-        .releaseCell {
-          display: flex;
-          align-items: center;
-          gap: 11px;
-        }
-
-        .releaseCell img,
-        .artFallback {
-          width: 44px;
-          height: 44px;
-          border-radius: 10px;
-          object-fit: cover;
-          flex-shrink: 0;
-        }
-
-        .artFallback {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          background:
-            linear-gradient(
-              135deg,
-              #1d4ed8,
-              #7c3aed
-            );
-        }
-
-        .releaseCell strong,
-        .releaseCell span {
-          display: block;
-        }
-
-        .releaseCell strong {
-          color: #f8fafc;
-          font-size: 12px;
-          margin-bottom: 4px;
-        }
-
-        .releaseCell span {
-          color: #64748b;
-          font-size: 9px;
-        }
-
-        .mono {
-          font-family:
-            ui-monospace,
-            monospace;
-          color: #94a3b8;
-        }
-
-        .status {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          text-transform: capitalize;
-          border-radius: 999px;
-          padding: 5px 9px;
-          font-size: 9px;
-          font-weight: 800;
-        }
-
-        .statusDot {
-          width: 5px;
-          height: 5px;
-          border-radius: 50%;
-          background: currentColor;
-        }
-
-        .status.live {
-          color: #34d399;
-          background:
-            rgba(
-              16,
-              185,
-              129,
-              0.1
-            );
-        }
-
-        .status.pending {
-          color: #fbbf24;
-          background:
-            rgba(
-              245,
-              158,
-              11,
-              0.1
-            );
-        }
-
-        .status.approved {
-          color: #a78bfa;
-          background:
-            rgba(
-              139,
-              92,
-              246,
-              0.1
-            );
-        }
-
-        .status.rejected {
-          color: #fb7185;
-          background:
-            rgba(
-              244,
-              63,
-              94,
-              0.1
-            );
-        }
-
-        .status.draft {
-          color: #94a3b8;
-          background:
-            rgba(
-              148,
-              163,
-              184,
-              0.09
-            );
-        }
-
-        .rowButton {
-          width: 30px;
-          height: 30px;
-          border-radius: 8px;
-          cursor: pointer;
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.1
-            );
-          background:
-            rgba(
-              30,
-              41,
-              59,
-              0.55
-            );
-          color: #60a5fa;
-        }
-
-        .rightColumn {
-          display: flex;
-          flex-direction: column;
-          gap: 18px;
-        }
-
-        .analyticsPanel,
-        .revenuePanel {
-          padding-bottom: 20px;
-        }
-
-        .healthNumber {
-          font-size: 20px;
-          font-weight: 900;
-          color: #60a5fa;
-        }
-
-        .healthRing {
-          height: 180px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .healthRingInner {
-          width: 135px;
-          height: 135px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background:
-            conic-gradient(
-              #3b82f6
-              var(
-                --progress
-              ),
-              rgba(
-                  148,
-                  163,
-                  184,
-                  0.08
-                )
-                0
-            );
-          position: relative;
-        }
-
-        .healthRingInner:after {
-          content: "";
-          position: absolute;
-          width: 106px;
-          height: 106px;
-          border-radius: 50%;
-          background: #0c1322;
-        }
-
-        .healthCenter {
-          z-index: 2;
-          text-align: center;
-        }
-
-        .healthCenter strong {
-          display: block;
-          font-size: 26px;
-        }
-
-        .healthCenter span {
-          color: #64748b;
-          font-size: 9px;
-        }
-
-        .analyticsRows {
-          padding: 0 23px;
-        }
-
-        .revenuePanel {
-          padding: 22px;
-        }
-
-        .revenueTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-top: 15px;
-        }
-
-        .revenueTop p {
-          margin: 0;
-          color: #64748b;
-          font-size: 10px;
-        }
-
-        .revenueTop h3 {
-          font-size: 29px;
-          margin: 6px 0;
-        }
-
-        .revenueIcon {
-          width: 48px;
-          height: 48px;
-          border-radius: 14px;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          font-size: 18px;
-          font-weight: 900;
-          background:
-            linear-gradient(
-              135deg,
-              rgba(
-                16,
-                185,
-                129,
-                0.2
-              ),
-              rgba(
-                6,
-                182,
-                212,
-                0.12
-              )
-            );
-          color: #34d399;
-        }
-
-        .revenueLine {
-          margin-top: 15px;
-          padding: 13px 0;
-          display: flex;
-          justify-content: space-between;
-          color: #64748b;
-          border-top:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.08
-            );
-          border-bottom:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.08
-            );
-          font-size: 10px;
-        }
-
-        .revenueLine strong {
-          color: #cbd5e1;
-        }
-
-        .revenueButton {
-          width: 100%;
-          height: 39px;
-          border-radius: 10px;
-          margin-top: 15px;
-          border:
-            1px solid
-            rgba(
-              52,
-              211,
-              153,
-              0.16
-            );
-          color: #34d399;
-          background:
-            rgba(
-              16,
-              185,
-              129,
-              0.06
-            );
-          cursor: pointer;
-          font-weight: 800;
-        }
-
-        .revenueButton span {
-          margin-left: 7px;
-        }
-
-        .emptyState {
-          min-height: 300px;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          color: #64748b;
-          text-align: center;
-        }
-
-        .emptyIcon {
-          width: 52px;
-          height: 52px;
-          border-radius: 15px;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          margin-bottom: 12px;
-          color: #60a5fa;
-          background:
-            rgba(
-              37,
-              99,
-              235,
-              0.1
-            );
-        }
-
-        .emptyState h4 {
-          margin: 4px 0;
-          color: #f8fafc;
-        }
-
-        .emptyState p {
-          font-size: 11px;
-        }
-
-        .emptyState button {
-          margin-top: 10px;
-          background: #2563eb;
-          color: white;
-          border: none;
-          border-radius: 9px;
-          padding: 10px 15px;
-          cursor: pointer;
-        }
-
-        .loader {
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          border:
-            2px solid
-            rgba(
-              96,
-              165,
-              250,
-              0.15
-            );
-          border-top-color:
-            #3b82f6;
-          animation:
-            spin 0.8s linear
-            infinite;
-          margin-bottom: 12px;
-        }
-
-        @keyframes spin {
-          to {
-            transform:
-              rotate(
-                360deg
-              );
-          }
-        }
-
-        @media (
-          max-width: 1250px
-        ) {
-          .statsGrid {
-            grid-template-columns:
-              repeat(
-                3,
-                1fr
-              );
-          }
-
-          .dashboardGrid {
-            grid-template-columns:
-              1fr;
-          }
-
-          .rightColumn {
-            display: grid;
-            grid-template-columns:
-              1fr 1fr;
-          }
-        }
-
-        @media (
-          max-width: 900px
-        ) {
-          .sidebar {
-            width: 86px;
-          }
-
-          .sidebar .brand > div:not(
-              .brandIcon
-            ),
-          .sidebarCard {
-            display: none;
-          }
-
-          .main,
-          .sidebar.collapsed
-            + .main {
-            margin-left: 86px;
-            padding:
-              20px 16px
-              50px;
-          }
-
-          .hero {
-            padding: 30px 25px;
-          }
-
-          .heroContent {
-            width: 100%;
-          }
-
-          .heroVisual {
-            display: none;
-          }
-
-          .statsGrid {
-            grid-template-columns:
-              repeat(
-                2,
-                1fr
-              );
-          }
-        }
-
-        @media (
-          max-width: 600px
-        ) {
-          .sidebar {
-            display: none;
-          }
-
-          .main,
-          .sidebar.collapsed
-            + .main {
-            margin-left: 0;
-            padding:
-              14px 12px
-              40px;
-          }
-
-          .header h1 {
-            font-size: 18px;
-          }
-
-          .desktopOnly {
-            display: none;
-          }
-
-          .hero {
-            min-height: auto;
-            padding: 25px 20px;
-          }
-
-          .hero h2 {
-            font-size: 34px;
-          }
-
-          .heroActions {
-            flex-direction: column;
-          }
-
-          .statsGrid {
-            grid-template-columns:
-              1fr 1fr;
-            gap: 10px;
-          }
-
-          .rightColumn {
-            grid-template-columns:
-              1fr;
-          }
-        }
-      `}</style>
     </div>
   );
 }
 
 /*
- * =========================================
- * NAV ITEM
- * =========================================
+ * =========================================================
+ * SMALL COMPONENT
+ * =========================================================
  */
 
-function NavItem({
-  icon,
-  label,
-  active,
-  collapsed,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  active?: boolean;
-  collapsed?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={
-        active
-          ? "navItem active"
-          : "navItem"
-      }
-    >
-      <span className="navIcon">
-        {icon}
-      </span>
-
-      {!collapsed && (
-        <span>
-          {label}
-        </span>
-      )}
-
-      <style jsx>{`
-        .navItem {
-          width: 100%;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          border: 0;
-          border-radius: 11px;
-          cursor: pointer;
-          padding: 0 13px;
-          color: #8a99af;
-          background: transparent;
-          font-size: 12px;
-          font-weight: 650;
-          transition:
-            all 0.2s ease;
-          text-align: left;
-        }
-
-        .navItem:hover {
-          color: #f8fafc;
-          background:
-            rgba(
-              59,
-              130,
-              246,
-              0.07
-            );
-        }
-
-        .navItem.active {
-          color: #eff6ff;
-          background:
-            linear-gradient(
-              90deg,
-              rgba(
-                37,
-                99,
-                235,
-                0.23
-              ),
-              rgba(
-                79,
-                70,
-                229,
-                0.12
-              )
-            );
-          border:
-            1px solid
-            rgba(
-              96,
-              165,
-              250,
-              0.17
-            );
-          box-shadow:
-            inset 3px 0
-            #3b82f6;
-        }
-
-        .navIcon {
-          width: 22px;
-          text-align: center;
-          font-size: 15px;
-          color: #60a5fa;
-        }
-      `}</style>
-    </button>
-  );
-}
-
-/*
- * =========================================
- * METRIC CARD
- * =========================================
- */
-
-function MetricCard({
+function OverviewRow({
   title,
   value,
-  subtitle,
-  icon,
-  type,
+  color,
 }: {
   title: string;
-  value: string | number;
-  subtitle: string;
-  icon: string;
-  type:
-    | "blue"
-    | "orange"
-    | "purple"
-    | "green"
-    | "red"
-    | "cyan";
-}) {
-  return (
-    <div
-      className={`metric ${type}`}
-    >
-      <div className="metricTop">
-        <span>
-          {title}
-        </span>
-
-        <div className="metricIcon">
-          {icon}
-        </div>
-      </div>
-
-      <strong>
-        {value}
-      </strong>
-
-      <small>
-        {subtitle}
-      </small>
-
-      <div className="metricGlow" />
-
-      <style jsx>{`
-        .metric {
-          min-height: 135px;
-          position: relative;
-          overflow: hidden;
-          padding: 17px;
-          border-radius: 17px;
-          border:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.1
-            );
-          background:
-            linear-gradient(
-              145deg,
-              rgba(
-                17,
-                25,
-                44,
-                0.94
-              ),
-              rgba(
-                11,
-                17,
-                30,
-                0.95
-              )
-            );
-          transition:
-            transform 0.2s ease,
-            border-color
-              0.2s ease;
-        }
-
-        .metric:hover {
-          transform:
-            translateY(-3px);
-          border-color:
-            rgba(
-              96,
-              165,
-              250,
-              0.2
-            );
-        }
-
-        .metricTop {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          color: #8795aa;
-          font-size: 10px;
-        }
-
-        .metricIcon {
-          width: 33px;
-          height: 33px;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          border-radius: 10px;
-          font-size: 13px;
-        }
-
-        strong {
-          display: block;
-          font-size: 25px;
-          margin: 11px 0 5px;
-          position: relative;
-          z-index: 2;
-        }
-
-        small {
-          color: #526177;
-          font-size: 9px;
-          position: relative;
-          z-index: 2;
-        }
-
-        .metricGlow {
-          position: absolute;
-          right: -35px;
-          bottom: -45px;
-          width: 100px;
-          height: 100px;
-          border-radius: 50%;
-          filter: blur(35px);
-          opacity: 0.18;
-        }
-
-        .blue
-          .metricIcon {
-          color: #60a5fa;
-          background:
-            rgba(
-              59,
-              130,
-              246,
-              0.12
-            );
-        }
-
-        .blue .metricGlow {
-          background: #3b82f6;
-        }
-
-        .orange
-          .metricIcon {
-          color: #fbbf24;
-          background:
-            rgba(
-              245,
-              158,
-              11,
-              0.1
-            );
-        }
-
-        .orange
-          .metricGlow {
-          background: #f59e0b;
-        }
-
-        .purple
-          .metricIcon {
-          color: #a78bfa;
-          background:
-            rgba(
-              139,
-              92,
-              246,
-              0.11
-            );
-        }
-
-        .purple
-          .metricGlow {
-          background: #8b5cf6;
-        }
-
-        .green
-          .metricIcon {
-          color: #34d399;
-          background:
-            rgba(
-              16,
-              185,
-              129,
-              0.1
-            );
-        }
-
-        .green .metricGlow {
-          background: #10b981;
-        }
-
-        .red
-          .metricIcon {
-          color: #fb7185;
-          background:
-            rgba(
-              244,
-              63,
-              94,
-              0.1
-            );
-        }
-
-        .red .metricGlow {
-          background: #f43f5e;
-        }
-
-        .cyan
-          .metricIcon {
-          color: #22d3ee;
-          background:
-            rgba(
-              6,
-              182,
-              212,
-              0.1
-            );
-        }
-
-        .cyan .metricGlow {
-          background: #06b6d4;
-        }
-      `}</style>
-    </div>
-  );
-}
-
-function AnalyticsRow({
-  label,
-  value,
-  dot,
-}: {
-  label: string;
   value: number;
-  dot: string;
+  color: string;
 }) {
   return (
-    <div className="analyticsRow">
-      <div>
+    <div style={overviewRow}>
+      <div style={overviewTitle}>
         <span
-          className={`dot ${dot}`}
+          style={{
+            ...overviewDot,
+            background: color,
+            boxShadow: `0 0 10px ${color}`,
+          }}
         />
 
-        {label}
+        {title}
       </div>
 
-      <strong>
+      <strong style={overviewValue}>
         {value}
       </strong>
-
-      <style jsx>{`
-        .analyticsRow {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 0;
-          border-top:
-            1px solid
-            rgba(
-              148,
-              163,
-              184,
-              0.07
-            );
-          font-size: 10px;
-          color: #94a3b8;
-        }
-
-        .analyticsRow div {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        strong {
-          color: #f8fafc;
-        }
-
-        .dot {
-          width: 6px;
-          height: 6px;
-          display: inline-block;
-          border-radius: 50%;
-        }
-
-        .greenDot {
-          background: #34d399;
-          box-shadow:
-            0 0 10px
-            rgba(
-              52,
-              211,
-              153,
-              0.7
-            );
-        }
-
-        .orangeDot {
-          background: #fbbf24;
-        }
-
-        .redDot {
-          background: #fb7185;
-        }
-      `}</style>
     </div>
   );
 }
+
+/*
+ * =========================================================
+ * STYLES
+ * =========================================================
+ */
+
+const loadingStyle = {
+  minHeight: "100vh",
+  background:
+    "radial-gradient(circle at 50% 20%, rgba(37,99,235,.15), transparent 35%), #050816",
+
+  color: "white",
+
+  display: "flex",
+
+  flexDirection:
+    "column" as const,
+
+  alignItems:
+    "center",
+
+  justifyContent:
+    "center",
+
+  fontFamily:
+    "Inter, Arial, sans-serif",
+};
+
+const loadingLogo = {
+  width: "58px",
+  height: "58px",
+
+  borderRadius: "18px",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  background:
+    "linear-gradient(135deg,#2563EB,#7C3AED)",
+
+  fontWeight: 900,
+
+  fontSize: "25px",
+
+  boxShadow:
+    "0 20px 60px rgba(37,99,235,.35)",
+
+  marginBottom: "20px",
+};
+
+const loader = {
+  width: "27px",
+  height: "27px",
+
+  borderRadius: "50%",
+
+  border:
+    "2px solid rgba(96,165,250,.18)",
+
+  borderTopColor:
+    "#60A5FA",
+
+  marginBottom: "12px",
+};
+
+const pageWrapper = {
+  display: "flex",
+
+  minHeight: "100vh",
+
+  background:
+    "radial-gradient(circle at 80% 0%, rgba(37,99,235,.07), transparent 30%), radial-gradient(circle at 30% 100%, rgba(124,58,237,.06), transparent 30%), #050816",
+
+  color: "white",
+
+  fontFamily:
+    "Inter, Arial, sans-serif",
+};
+
+const sidebarStyle = {
+  width: "252px",
+
+  minWidth: "252px",
+
+  minHeight: "100vh",
+
+  background:
+    "linear-gradient(180deg,#0A1222 0%,#07101D 100%)",
+
+  padding: "22px 16px",
+
+  borderRight:
+    "1px solid rgba(148,163,184,.10)",
+
+  display: "flex",
+
+  flexDirection:
+    "column" as const,
+
+  justifyContent:
+    "space-between",
+
+  position:
+    "sticky" as const,
+
+  top: 0,
+
+  height: "100vh",
+
+  overflowY:
+    "auto" as const,
+};
+
+const brandArea = {
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "12px",
+
+  padding:
+    "3px 5px 23px",
+};
+
+const logoBox = {
+  width: "45px",
+
+  height: "45px",
+
+  borderRadius: "14px",
+
+  background:
+    "linear-gradient(135deg,#2563EB,#7C3AED)",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontWeight: 900,
+
+  fontSize: "21px",
+
+  boxShadow:
+    "0 12px 30px rgba(37,99,235,.32)",
+};
+
+const brandName = {
+  fontSize: "19px",
+
+  fontWeight: 900,
+
+  margin: 0,
+
+  letterSpacing:
+    ".3px",
+};
+
+const brandSubtitle = {
+  color: "#64748B",
+
+  fontSize: "10px",
+
+  margin: "3px 0 0",
+};
+
+const navList = {
+  display: "flex",
+
+  flexDirection:
+    "column" as const,
+
+  gap: "5px",
+};
+
+const navItem = {
+  position:
+    "relative" as const,
+
+  minHeight: "44px",
+
+  padding:
+    "0 12px",
+
+  borderRadius: "11px",
+
+  color: "#94A3B8",
+
+  cursor: "pointer",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "12px",
+
+  fontWeight: 600,
+
+  fontSize: "12px",
+
+  border:
+    "1px solid transparent",
+};
+
+const activeNavItem = {
+  background:
+    "linear-gradient(90deg,rgba(37,99,235,.24),rgba(79,70,229,.12))",
+
+  border:
+    "1px solid rgba(96,165,250,.20)",
+
+  color: "#F8FAFC",
+
+  boxShadow:
+    "0 8px 30px rgba(37,99,235,.10)",
+};
+
+const navIcon = {
+  width: "22px",
+
+  textAlign:
+    "center" as const,
+
+  fontSize: "16px",
+
+  color: "#64748B",
+};
+
+const activeIndicator = {
+  position:
+    "absolute" as const,
+
+  left: "-17px",
+
+  width: "3px",
+
+  height: "24px",
+
+  borderRadius:
+    "0 4px 4px 0",
+
+  background:
+    "#3B82F6",
+
+  boxShadow:
+    "0 0 12px #3B82F6",
+};
+
+const divider = {
+  height: "1px",
+
+  background:
+    "rgba(148,163,184,.09)",
+
+  margin: "20px 4px",
+};
+
+const sectionTitle = {
+  color: "#475569",
+
+  fontSize: "9px",
+
+  fontWeight: 800,
+
+  letterSpacing:
+    "1.3px",
+
+  margin:
+    "0 10px 10px",
+};
+
+const sidebarPromo = {
+  position:
+    "relative" as const,
+
+  overflow:
+    "hidden" as const,
+
+  border:
+    "1px solid rgba(96,165,250,.16)",
+
+  borderRadius: "15px",
+
+  padding: "16px",
+
+  marginBottom: "15px",
+
+  background:
+    "linear-gradient(145deg,rgba(37,99,235,.12),rgba(124,58,237,.08))",
+};
+
+const promoGlow = {
+  position:
+    "absolute" as const,
+
+  right: "-30px",
+
+  bottom: "-30px",
+
+  width: "90px",
+
+  height: "90px",
+
+  borderRadius:
+    "50%",
+
+  background:
+    "rgba(124,58,237,.25)",
+
+  filter: "blur(30px)",
+};
+
+const promoSmall = {
+  color: "#60A5FA",
+
+  fontSize: "9px",
+
+  fontWeight: 800,
+
+  letterSpacing:
+    "1px",
+};
+
+const promoTitle = {
+  position:
+    "relative" as const,
+
+  margin:
+    "8px 0 6px",
+
+  fontSize: "13px",
+
+  lineHeight: 1.4,
+};
+
+const promoText = {
+  position:
+    "relative" as const,
+
+  margin: 0,
+
+  color: "#64748B",
+
+  fontSize: "9px",
+
+  lineHeight: 1.5,
+};
+
+const profileBox = {
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "10px",
+
+  padding:
+    "14px 6px 0",
+
+  borderTop:
+    "1px solid rgba(148,163,184,.09)",
+};
+
+const profileAvatar = {
+  width: "35px",
+
+  height: "35px",
+
+  borderRadius: "11px",
+
+  background:
+    "linear-gradient(135deg,#1D4ED8,#7C3AED)",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontWeight: 900,
+
+  fontSize: "13px",
+};
+
+const profileName = {
+  margin: 0,
+
+  fontWeight: 700,
+
+  fontSize: "10px",
+
+  whiteSpace:
+    "nowrap" as const,
+
+  overflow:
+    "hidden" as const,
+
+  textOverflow:
+    "ellipsis",
+};
+
+const profileRole = {
+  margin: "3px 0 0",
+
+  color: "#64748B",
+
+  fontSize: "9px",
+};
+
+const logoutIconButton = {
+  width: "31px",
+
+  height: "31px",
+
+  borderRadius: "9px",
+
+  border:
+    "1px solid rgba(148,163,184,.10)",
+
+  background:
+    "#111827",
+
+  color: "#94A3B8",
+
+  cursor: "pointer",
+};
+
+const mainStyle = {
+  flex: 1,
+
+  minWidth: 0,
+
+  padding:
+    "26px 30px 55px",
+};
+
+const headerStyle = {
+  display: "flex",
+
+  justifyContent:
+    "space-between",
+
+  alignItems:
+    "center",
+
+  gap: "20px",
+
+  marginBottom: "22px",
+};
+
+const headerBadge = {
+  color: "#3B82F6",
+
+  fontSize: "9px",
+
+  fontWeight: 800,
+
+  letterSpacing:
+    "1.5px",
+
+  marginBottom: "6px",
+};
+
+const dashboardHeading = {
+  fontSize: "29px",
+
+  lineHeight: 1.15,
+
+  letterSpacing:
+    "-.7px",
+
+  fontWeight: 800,
+
+  margin: 0,
+};
+
+const dashboardDescription = {
+  color: "#64748B",
+
+  margin: "7px 0 0",
+
+  fontSize: "12px",
+};
+
+const headerButtons = {
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "10px",
+};
+
+const notificationButton = {
+  minHeight: "42px",
+
+  padding: "0 14px",
+
+  borderRadius: "11px",
+
+  border:
+    "1px solid rgba(148,163,184,.12)",
+
+  background:
+    "rgba(15,23,42,.75)",
+
+  color: "#CBD5E1",
+
+  cursor: "pointer",
+
+  fontWeight: 700,
+
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "8px",
+};
+
+const notificationBadge = {
+  minWidth: "19px",
+
+  height: "19px",
+
+  padding: "0 5px",
+
+  borderRadius:
+    "999px",
+
+  background:
+    "#7C3AED",
+
+  color: "white",
+
+  display: "inline-flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontSize: "9px",
+};
+
+const newReleaseButton = {
+  minHeight: "42px",
+
+  padding: "0 16px",
+
+  borderRadius: "11px",
+
+  border: "none",
+
+  background:
+    "linear-gradient(135deg,#2563EB,#4F46E5)",
+
+  color: "white",
+
+  cursor: "pointer",
+
+  fontWeight: 800,
+
+  boxShadow:
+    "0 10px 28px rgba(37,99,235,.25)",
+};
+
+const heroCard = {
+  minHeight: "280px",
+
+  position:
+    "relative" as const,
+
+  overflow:
+    "hidden" as const,
+
+  borderRadius: "23px",
+
+  padding: "36px 40px",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  border:
+    "1px solid rgba(96,165,250,.15)",
+
+  background:
+    "linear-gradient(115deg,rgba(14,23,41,.98),rgba(11,21,47,.96) 55%,rgba(30,19,61,.94))",
+
+  boxShadow:
+    "0 25px 80px rgba(0,0,0,.20)",
+};
+
+const heroGlowBlue = {
+  position:
+    "absolute" as const,
+
+  width: "260px",
+
+  height: "260px",
+
+  right: "130px",
+
+  top: "-130px",
+
+  borderRadius:
+    "50%",
+
+  background:
+    "rgba(37,99,235,.30)",
+
+  filter: "blur(70px)",
+};
+
+const heroGlowPurple = {
+  position:
+    "absolute" as const,
+
+  width: "230px",
+
+  height: "230px",
+
+  right: "-80px",
+
+  bottom: "-110px",
+
+  borderRadius:
+    "50%",
+
+  background:
+    "rgba(124,58,237,.30)",
+
+  filter: "blur(65px)",
+};
+
+const heroContent = {
+  width: "55%",
+
+  position:
+    "relative" as const,
+
+  zIndex: 2,
+};
+
+const heroMiniBadge = {
+  display:
+    "inline-flex",
+
+  color: "#60A5FA",
+
+  border:
+    "1px solid rgba(96,165,250,.20)",
+
+  background:
+    "rgba(37,99,235,.08)",
+
+  padding: "6px 10px",
+
+  borderRadius:
+    "999px",
+
+  fontSize: "9px",
+
+  fontWeight: 800,
+
+  letterSpacing:
+    "1.2px",
+};
+
+const heroTitle = {
+  margin:
+    "14px 0 8px",
+
+  fontSize: "46px",
+
+  lineHeight: 1.04,
+
+  letterSpacing:
+    "-2px",
+
+  fontWeight: 850,
+};
+
+const heroGradientText = {
+  background:
+    "linear-gradient(90deg,#60A5FA,#A78BFA)",
+
+  WebkitBackgroundClip:
+    "text",
+
+  WebkitTextFillColor:
+    "transparent",
+};
+
+const heroDescription = {
+  maxWidth: "500px",
+
+  color: "#8290A5",
+
+  lineHeight: 1.65,
+
+  fontSize: "12px",
+
+  margin: 0,
+};
+
+const heroButtons = {
+  display: "flex",
+
+  gap: "10px",
+
+  marginTop: "20px",
+};
+
+const heroPrimaryButton = {
+  minHeight: "42px",
+
+  padding: "0 16px",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "13px",
+
+  border: "none",
+
+  borderRadius: "10px",
+
+  color: "white",
+
+  fontWeight: 800,
+
+  cursor: "pointer",
+
+  background:
+    "linear-gradient(135deg,#2563EB,#4F46E5)",
+};
+
+const heroSecondaryButton = {
+  minHeight: "42px",
+
+  padding: "0 16px",
+
+  borderRadius: "10px",
+
+  color: "#CBD5E1",
+
+  fontWeight: 700,
+
+  cursor: "pointer",
+
+  background:
+    "rgba(15,23,42,.60)",
+
+  border:
+    "1px solid rgba(148,163,184,.13)",
+};
+
+const heroVisual = {
+  flex: 1,
+
+  height: "210px",
+
+  position:
+    "relative" as const,
+};
+
+const recordDisc = {
+  position:
+    "absolute" as const,
+
+  width: "190px",
+
+  height: "190px",
+
+  right: "80px",
+
+  top: "5px",
+
+  borderRadius:
+    "50%",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  background:
+    "repeating-radial-gradient(circle,#111827 0px,#111827 5px,#172036 6px,#172036 7px)",
+
+  boxShadow:
+    "0 30px 70px rgba(0,0,0,.45)",
+};
+
+const recordInner = {
+  width: "64px",
+
+  height: "64px",
+
+  borderRadius:
+    "50%",
+
+  background:
+    "linear-gradient(135deg,#2563EB,#7C3AED)",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+};
+
+const recordCenter = {
+  width: "27px",
+
+  height: "27px",
+
+  borderRadius:
+    "50%",
+
+  background: "#080D19",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontSize: "9px",
+
+  fontWeight: 900,
+};
+
+const floatingBase = {
+  position:
+    "absolute" as const,
+
+  minWidth: "115px",
+
+  padding: "11px 13px",
+
+  borderRadius: "13px",
+
+  border:
+    "1px solid rgba(255,255,255,.08)",
+
+  background:
+    "rgba(8,15,30,.78)",
+
+  boxShadow:
+    "0 15px 40px rgba(0,0,0,.25)",
+};
+
+const floatingStatOne = {
+  ...floatingBase,
+
+  right: "245px",
+
+  bottom: "0",
+};
+
+const floatingStatTwo = {
+  ...floatingBase,
+
+  right: "0",
+
+  top: "10px",
+};
+
+const floatingLabel = {
+  display: "block",
+
+  color: "#64748B",
+
+  fontSize: "8px",
+
+  fontWeight: 800,
+
+  letterSpacing:
+    "1px",
+};
+
+const floatingValue = {
+  display: "block",
+
+  fontSize: "22px",
+
+  margin: "4px 0 1px",
+};
+
+const floatingText = {
+  color: "#64748B",
+
+  fontSize: "8px",
+};
+
+const statsGrid = {
+  display: "grid",
+
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(160px,1fr))",
+
+  gap: "13px",
+
+  marginTop: "18px",
+};
+
+const statCard = {
+  minHeight: "130px",
+
+  position:
+    "relative" as const,
+
+  overflow:
+    "hidden" as const,
+
+  background:
+    "linear-gradient(145deg,rgba(17,25,44,.95),rgba(10,16,30,.97))",
+
+  padding: "16px",
+
+  borderRadius: "16px",
+
+  border:
+    "1px solid rgba(148,163,184,.10)",
+};
+
+const statTop = {
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "space-between",
+
+  gap: "10px",
+};
+
+const statTitle = {
+  color: "#8896AA",
+
+  margin: 0,
+
+  fontSize: "10px",
+
+  fontWeight: 650,
+};
+
+const statIcon = {
+  width: "32px",
+
+  height: "32px",
+
+  borderRadius: "10px",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontWeight: 800,
+};
+
+const statValue = {
+  fontSize: "27px",
+
+  margin: "10px 0 4px",
+
+  fontWeight: 800,
+};
+
+const statNote = {
+  color: "#526177",
+
+  fontSize: "9px",
+
+  margin: 0,
+};
+
+const statAccent = {
+  position:
+    "absolute" as const,
+
+  top: 0,
+
+  left: "16px",
+
+  right: "16px",
+
+  height: "1px",
+
+  opacity: 0.7,
+};
+
+const contentGrid = {
+  display: "grid",
+
+  gridTemplateColumns:
+    "minmax(0,2.2fr) minmax(280px,.8fr)",
+
+  gap: "18px",
+
+  marginTop: "18px",
+};
+
+const panelStyle = {
+  background:
+    "linear-gradient(145deg,rgba(17,25,44,.94),rgba(9,15,28,.97))",
+
+  borderRadius: "18px",
+
+  border:
+    "1px solid rgba(148,163,184,.10)",
+
+  overflow:
+    "hidden" as const,
+
+  minHeight: "440px",
+
+  boxShadow:
+    "0 18px 60px rgba(0,0,0,.13)",
+};
+
+const panelHeader = {
+  padding: "21px 22px",
+
+  display: "flex",
+
+  justifyContent:
+    "space-between",
+
+  alignItems: "center",
+
+  borderBottom:
+    "1px solid rgba(148,163,184,.08)",
+};
+
+const panelEyebrow = {
+  margin: 0,
+
+  color: "#3B82F6",
+
+  fontSize: "8px",
+
+  fontWeight: 900,
+
+  letterSpacing:
+    "1.4px",
+};
+
+const panelTitle = {
+  margin: "4px 0",
+
+  fontSize: "17px",
+};
+
+const panelDescription = {
+  color: "#64748B",
+
+  fontSize: "9px",
+
+  margin: 0,
+};
+
+const viewAllButton = {
+  border: "none",
+
+  background:
+    "transparent",
+
+  color: "#60A5FA",
+
+  cursor: "pointer",
+
+  fontWeight: 700,
+
+  fontSize: "10px",
+};
+
+const tableWrapper = {
+  padding:
+    "0 18px 18px",
+
+  overflowX:
+    "auto" as const,
+};
+
+const tableHeaderRow = {
+  color: "#64748B",
+
+  fontSize: "9px",
+
+  letterSpacing:
+    ".7px",
+};
+
+const thStyle = {
+  padding:
+    "15px 9px",
+
+  textAlign:
+    "left" as const,
+
+  borderBottom:
+    "1px solid rgba(148,163,184,.08)",
+
+  fontWeight: 700,
+};
+
+const tableRow = {
+  borderBottom:
+    "1px solid rgba(148,163,184,.065)",
+};
+
+const tdStyle = {
+  padding:
+    "13px 9px",
+};
+
+const releaseCell = {
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "11px",
+};
+
+const artworkThumb = {
+  width: "46px",
+
+  height: "46px",
+
+  borderRadius: "11px",
+
+  objectFit:
+    "cover" as const,
+
+  boxShadow:
+    "0 7px 20px rgba(0,0,0,.25)",
+};
+
+const emptyArtwork = {
+  width: "46px",
+
+  height: "46px",
+
+  borderRadius: "11px",
+
+  background:
+    "linear-gradient(135deg,#1D4ED8,#7C3AED)",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+};
+
+const releaseTitle = {
+  margin: 0,
+
+  fontSize: "11px",
+
+  fontWeight: 700,
+
+  color: "#F1F5F9",
+};
+
+const releaseTypeText = {
+  color: "#526177",
+
+  fontSize: "8px",
+
+  margin: "4px 0 0",
+};
+
+const normalCellText = {
+  color: "#CBD5E1",
+
+  fontSize: "10px",
+};
+
+const upcStyle = {
+  color: "#94A3B8",
+
+  fontSize: "9px",
+
+  fontFamily:
+    "monospace",
+};
+
+const statusStyle = {
+  display:
+    "inline-flex",
+
+  alignItems: "center",
+
+  gap: "6px",
+
+  padding: "5px 9px",
+
+  borderRadius:
+    "999px",
+
+  fontSize: "8px",
+
+  textTransform:
+    "capitalize" as const,
+
+  fontWeight: 750,
+};
+
+const statusDot = {
+  width: "5px",
+
+  height: "5px",
+
+  borderRadius:
+    "50%",
+};
+
+const liveStatus = {
+  color: "#34D399",
+
+  background:
+    "rgba(16,185,129,.10)",
+
+  border:
+    "1px solid rgba(16,185,129,.15)",
+};
+
+const approvedStatus = {
+  color: "#A78BFA",
+
+  background:
+    "rgba(139,92,246,.10)",
+
+  border:
+    "1px solid rgba(139,92,246,.15)",
+};
+
+const pendingStatus = {
+  color: "#FBBF24",
+
+  background:
+    "rgba(245,158,11,.10)",
+
+  border:
+    "1px solid rgba(245,158,11,.15)",
+};
+
+const rejectedStatus = {
+  color: "#FB7185",
+
+  background:
+    "rgba(244,63,94,.10)",
+
+  border:
+    "1px solid rgba(244,63,94,.15)",
+};
+
+const draftStatus = {
+  color: "#94A3B8",
+
+  background:
+    "rgba(148,163,184,.08)",
+
+  border:
+    "1px solid rgba(148,163,184,.10)",
+};
+
+const viewButton = {
+  minHeight: "31px",
+
+  padding: "0 10px",
+
+  borderRadius: "8px",
+
+  border:
+    "1px solid rgba(59,130,246,.22)",
+
+  background:
+    "rgba(37,99,235,.10)",
+
+  color: "#60A5FA",
+
+  cursor: "pointer",
+
+  fontSize: "9px",
+
+  fontWeight: 700,
+
+  display:
+    "inline-flex",
+
+  alignItems: "center",
+
+  gap: "7px",
+};
+
+const emptyTableCell = {
+  height: "300px",
+
+  textAlign:
+    "center" as const,
+};
+
+const emptyMusicIcon = {
+  width: "50px",
+
+  height: "50px",
+
+  borderRadius: "14px",
+
+  margin: "0 auto",
+
+  background:
+    "rgba(37,99,235,.10)",
+
+  color: "#60A5FA",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+
+  fontSize: "18px",
+};
+
+const rightColumn = {
+  display: "flex",
+
+  flexDirection:
+    "column" as const,
+
+  gap: "18px",
+};
+
+const smallPanel = {
+  background:
+    "linear-gradient(145deg,rgba(17,25,44,.94),rgba(9,15,28,.97))",
+
+  border:
+    "1px solid rgba(148,163,184,.10)",
+
+  borderRadius: "18px",
+
+  padding: "20px",
+
+  boxShadow:
+    "0 18px 60px rgba(0,0,0,.13)",
+};
+
+const smallPanelHeader = {
+  display: "flex",
+
+  justifyContent:
+    "space-between",
+
+  alignItems:
+    "center",
+};
+
+const smallPanelTitle = {
+  margin: "4px 0 0",
+
+  fontSize: "15px",
+};
+
+const analyticsIcon = {
+  width: "35px",
+
+  height: "35px",
+
+  borderRadius: "10px",
+
+  background:
+    "rgba(37,99,235,.10)",
+
+  color: "#60A5FA",
+
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "center",
+};
+
+const analyticsBigBox = {
+  marginTop: "17px",
+
+  padding:
+    "15px 15px 10px",
+
+  borderRadius: "13px",
+
+  background:
+    "rgba(6,11,22,.55)",
+
+  border:
+    "1px solid rgba(148,163,184,.08)",
+};
+
+const analyticsLabel = {
+  margin: 0,
+
+  color: "#64748B",
+
+  fontSize: "9px",
+};
+
+const analyticsRevenue = {
+  margin: "5px 0 12px",
+
+  fontSize: "24px",
+};
+
+const fakeChart = {
+  height: "55px",
+
+  display: "flex",
+
+  alignItems: "flex-end",
+
+  gap: "6px",
+};
+
+const fakeBar = {
+  flex: 1,
+
+  minHeight: "7px",
+
+  borderRadius:
+    "4px 4px 1px 1px",
+
+  background:
+    "linear-gradient(180deg,#3B82F6,#4F46E5)",
+
+  opacity: 0.85,
+};
+
+const overviewRows = {
+  marginTop: "12px",
+};
+
+const overviewRow = {
+  display: "flex",
+
+  alignItems: "center",
+
+  justifyContent:
+    "space-between",
+
+  minHeight: "39px",
+
+  borderBottom:
+    "1px solid rgba(148,163,184,.065)",
+
+  color: "#94A3B8",
+
+  fontSize: "9px",
+};
+
+const overviewTitle = {
+  display: "flex",
+
+  alignItems: "center",
+
+  gap: "8px",
+};
+
+const overviewDot = {
+  width: "6px",
+
+  height: "6px",
+
+  borderRadius:
+    "50%",
+};
+
+const overviewValue = {
+  color: "#F8FAFC",
+
+  fontSize: "11px",
+};
+
+const fullWidthButton = {
+  width: "100%",
+
+  minHeight: "38px",
+
+  marginTop: "15px",
+
+  borderRadius: "9px",
+
+  border:
+    "1px solid rgba(59,130,246,.18)",
+
+  background:
+    "rgba(37,99,235,.07)",
+
+  color: "#60A5FA",
+
+  fontWeight: 700,
+
+  cursor: "pointer",
+
+  fontSize: "9px",
+};
+
+const quickActionPanel = {
+  position:
+    "relative" as const,
+
+  overflow:
+    "hidden" as const,
+
+  padding: "21px",
+
+  borderRadius: "18px",
+
+  border:
+    "1px solid rgba(139,92,246,.18)",
+
+  background:
+    "linear-gradient(145deg,rgba(42,25,83,.38),rgba(13,19,36,.97))",
+};
+
+const quickActionGlow = {
+  position:
+    "absolute" as const,
+
+  right: "-50px",
+
+  bottom: "-70px",
+
+  width: "150px",
+
+  height: "150px",
+
+  borderRadius:
+    "50%",
+
+  background:
+    "rgba(124,58,237,.25)",
+
+  filter: "blur(45px)",
+};
+
+const quickTitle = {
+  position:
+    "relative" as const,
+
+  margin:
+    "9px 0 8px",
+
+  fontSize: "20px",
+
+  lineHeight: 1.2,
+};
+
+const quickDescription = {
+  position:
+    "relative" as const,
+
+  color: "#718096",
+
+  fontSize: "9px",
+
+  lineHeight: 1.6,
+
+  maxWidth: "220px",
+};
+
+const quickButton = {
+  position:
+    "relative" as const,
+
+  minHeight: "37px",
+
+  marginTop: "10px",
+
+  padding: "0 13px",
+
+  borderRadius: "9px",
+
+  border: "none",
+
+  color: "white",
+
+  background:
+    "linear-gradient(135deg,#7C3AED,#4F46E5)",
+
+  fontWeight: 700,
+
+  cursor: "pointer",
+
+  fontSize: "9px",
+};
