@@ -138,17 +138,18 @@ export async function POST(
     const writers: any[] =
       [];
 
-    if (
+   if (
   composer &&
   String(composer).trim()
 ) {
   writers.push({
-    name: String(
-      composer
-    ).trim(),
+    name:
+      String(
+        composer
+      ).trim(),
 
     role: [
-      "composer",
+      "Composer",
     ],
   });
 }
