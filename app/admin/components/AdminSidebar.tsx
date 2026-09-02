@@ -18,6 +18,11 @@ const menuItems = [
     icon: "♫",
   },
   {
+  label: "Bulk Upload",
+  href: "/admin/bulk-upload",
+  icon: "⇧",
+},
+  {
     label: "Artists",
     href: "/admin/artists",
     icon: "♟",
