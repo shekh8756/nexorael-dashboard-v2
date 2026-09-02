@@ -139,20 +139,19 @@ export async function POST(
       [];
 
     if (
-      composer &&
-      String(composer).trim()
-    ) {
-      writers.push({
-        name:
-          String(
-            composer
-          ).trim(),
+  composer &&
+  String(composer).trim()
+) {
+  writers.push({
+    name: String(
+      composer
+    ).trim(),
 
-        role: [
-          "composer",
-        ],
-      });
-    }
+    role: [
+      "composer",
+    ],
+  });
+}
 
     if (
       lyricist &&
