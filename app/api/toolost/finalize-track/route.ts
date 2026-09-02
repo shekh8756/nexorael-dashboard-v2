@@ -135,28 +135,21 @@ export async function POST(
      * =========================================
      */
 
-    const writers: any[] =
-      [];
+const writers: any[] = [];
 
-   if (
-  composer &&
-  String(composer).trim()
-) {
+if (composer && String(composer).trim()) {
   writers.push({
     name: String(composer).trim(),
-    role: "Composer instrumentalist",
-  });
-}
-if (
-  lyricist &&
-  String(lyricist).trim()
-) {
-  writers.push({
-    name: String(lyricist).trim(),
-    role: "Lyricist",
+    role: ["composer"],
   });
 }
 
+if (lyricist && String(lyricist).trim()) {
+  writers.push({
+    name: String(lyricist).trim(),
+    role: ["lyricist"],
+  });
+}
     /*
      * Too Lost requires at least
      * one writer.
