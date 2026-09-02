@@ -149,7 +149,7 @@ export async function POST(
       ).trim(),
 
     role: [
-      "Composer",
+      "Composer instrumentalist",
     ],
   });
 }
@@ -165,8 +165,8 @@ export async function POST(
           ).trim(),
 
         role: [
-          "lyricist",
-        ],
+  "Lyricist",
+],
       });
     }
 
