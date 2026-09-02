@@ -40,31 +40,28 @@ type Release = {
   toolost_review_note?: string | null;
 
   uploaded_by_name?: string | null;
-uploaded_by_email?: string | null;
+  uploaded_by_email?: string | null;
 
-/*
- * Admin API normalized fields
- */
-user_name?: string | null;
-user_email?: string | null;
+  user_name?: string | null;
+  user_email?: string | null;
 
-user?: {
-  id?: string | null;
-  name?: string | null;
-  full_name?: string | null;
-  email?: string | null;
-  role?: string | null;
-  status?: string | null;
-} | null;
+  user?: {
+    id?: string | null;
+    name?: string | null;
+    full_name?: string | null;
+    email?: string | null;
+    role?: string | null;
+    status?: string | null;
+  } | null;
 
-white_label_name?: string | null;
+  white_label_name?: string | null;
 
-white_label?: {
-  id?: string | null;
-  name?: string | null;
-  brand_name?: string | null;
-  status?: string | null;
-} | null;
+  white_label?: {
+    id?: string | null;
+    name?: string | null;
+    brand_name?: string | null;
+    status?: string | null;
+  } | null;
 
   [key: string]: any;
 };
@@ -117,6 +114,17 @@ const DSP_LIST = [
 ];
 
 /* ======================================================
+   BULK ELIGIBLE STATUSES
+====================================================== */
+
+const BULK_APPROVABLE_STATUSES = [
+  "draft",
+  "pending",
+  "in_review",
+  "under_review",
+];
+
+/* ======================================================
    STATUS FILTERS
 ====================================================== */
 
@@ -143,13 +151,22 @@ const STATUS_LIST = [
 export default function AdminReleasesPage() {
   const router = useRouter();
 
-  const [releases, setReleases] =
+  const [
+    releases,
+    setReleases,
+  ] =
     useState<Release[]>([]);
 
-  const [loading, setLoading] =
+  const [
+    loading,
+    setLoading,
+  ] =
     useState(true);
 
-  const [error, setError] =
+  const [
+    error,
+    setError,
+  ] =
     useState("");
 
   const [
@@ -160,7 +177,10 @@ export default function AdminReleasesPage() {
       null
     );
 
-  const [search, setSearch] =
+  const [
+    search,
+    setSearch,
+  ] =
     useState("");
 
   const [
@@ -170,7 +190,7 @@ export default function AdminReleasesPage() {
     useState("all");
 
   /* ====================================================
-     DSP MODAL
+     SINGLE DSP MODAL
   ==================================================== */
 
   const [
@@ -216,6 +236,51 @@ export default function AdminReleasesPage() {
     );
 
   /* ====================================================
+     BULK RELEASE ACTIONS
+  ==================================================== */
+
+  const [
+    bulkSelectedIds,
+    setBulkSelectedIds,
+  ] =
+    useState<string[]>([]);
+
+  const [
+    bulkModalOpen,
+    setBulkModalOpen,
+  ] =
+    useState(false);
+
+  const [
+    bulkDSPs,
+    setBulkDSPs,
+  ] =
+    useState<string[]>([]);
+
+  const [
+    bulkProcessing,
+    setBulkProcessing,
+  ] =
+    useState(false);
+
+  const [
+    bulkProgress,
+    setBulkProgress,
+  ] =
+    useState({
+      done: 0,
+      total: 0,
+      success: 0,
+      failed: 0,
+    });
+
+  const [
+    bulkErrors,
+    setBulkErrors,
+  ] =
+    useState<string[]>([]);
+
+  /* ====================================================
      LOAD ON START
   ==================================================== */
 
@@ -257,13 +322,17 @@ export default function AdminReleasesPage() {
       const {
         data: profile,
         error: profileError,
-      } = await supabase
-        .from("profiles")
-        .select(
-          "id,role,status,white_label_id,full_name,email"
-        )
-        .eq("id", userId)
-        .maybeSingle();
+      } =
+        await supabase
+          .from("profiles")
+          .select(
+            "id,role,status,white_label_id,full_name,email"
+          )
+          .eq(
+            "id",
+            userId
+          )
+          .maybeSingle();
 
       if (profileError) {
         throw new Error(
@@ -320,12 +389,12 @@ export default function AdminReleasesPage() {
         );
       }
 
-      const normalizedProfile: AdminProfile =
-        {
-          ...profile,
-          role,
-          status,
-        };
+      const normalizedProfile:
+        AdminProfile = {
+        ...profile,
+        role,
+        status,
+      };
 
       setAdminProfile(
         normalizedProfile
@@ -352,16 +421,14 @@ export default function AdminReleasesPage() {
 
   /* ====================================================
      LOAD RELEASES
-
-     IMPORTANT:
-     Uses our Admin API first.
-     That API synchronizes Too Lost statuses.
   ==================================================== */
 
   const loadReleases =
     useCallback(
       async (
-        profileParam?: AdminProfile | null
+        profileParam?:
+          | AdminProfile
+          | null
       ) => {
         const profile =
           profileParam ||
@@ -375,8 +442,11 @@ export default function AdminReleasesPage() {
             await fetch(
               `/api/admin/releases?t=${Date.now()}`,
               {
-                method: "GET",
-                cache: "no-store",
+                method:
+                  "GET",
+
+                cache:
+                  "no-store",
               }
             );
 
@@ -393,11 +463,8 @@ export default function AdminReleasesPage() {
             );
           }
 
-          /*
-           * Support common response wrappers.
-           */
-          let releaseData: Release[] =
-            [];
+          let releaseData:
+            Release[] = [];
 
           if (
             Array.isArray(
@@ -420,13 +487,12 @@ export default function AdminReleasesPage() {
               json;
           }
 
-          /*
-           * White-label admins may only
-           * see their own white-label releases.
-           */
+          /* WHITE LABEL ADMIN FILTER */
+
           if (
             String(
-              profile?.role || ""
+              profile?.role ||
+                ""
             ).toLowerCase() ===
             "white_label_admin"
           ) {
@@ -439,7 +505,9 @@ export default function AdminReleasesPage() {
             } else {
               releaseData =
                 releaseData.filter(
-                  (release) =>
+                  (
+                    release
+                  ) =>
                     String(
                       release.white_label_id ||
                         ""
@@ -453,6 +521,29 @@ export default function AdminReleasesPage() {
 
           setReleases(
             releaseData
+          );
+
+          /*
+           * Remove selections that
+           * no longer exist.
+           */
+
+          const availableIds =
+            new Set(
+              releaseData.map(
+                (release) =>
+                  release.id
+              )
+            );
+
+          setBulkSelectedIds(
+            (current) =>
+              current.filter(
+                (id) =>
+                  availableIds.has(
+                    id
+                  )
+              )
           );
         } catch (err) {
           console.error(
@@ -473,7 +564,63 @@ export default function AdminReleasesPage() {
     );
 
   /* ====================================================
-     FETCH SELECTED DSP RECORDS FOR A RELEASE
+     GENERIC RELEASE API ACTION
+  ==================================================== */
+
+  async function runReleaseAction(
+    releaseId: string,
+    payload:
+      Record<
+        string,
+        any
+      >
+  ) {
+    const response =
+      await fetch(
+        `/api/admin/releases/${releaseId}`,
+        {
+          method:
+            "PATCH",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body:
+            JSON.stringify(
+              payload
+            ),
+        }
+      );
+
+    let data: any =
+      null;
+
+    try {
+      data =
+        await response.json();
+    } catch {
+      throw new Error(
+        `API returned invalid response (${response.status}).`
+      );
+    }
+
+    if (
+      !response.ok ||
+      !data?.success
+    ) {
+      throw new Error(
+        data?.error ||
+          `Request failed (${response.status}).`
+      );
+    }
+
+    return data;
+  }
+
+  /* ====================================================
+     FETCH DSP RECORDS
   ==================================================== */
 
   async function fetchReleaseDSPs(
@@ -485,17 +632,19 @@ export default function AdminReleasesPage() {
       await fetch(
         `/api/admin/releases/${release.id}`,
         {
-          method: "PATCH",
+          method:
+            "PATCH",
 
           headers: {
             "Content-Type":
               "application/json",
           },
 
-          body: JSON.stringify({
-            action:
-              "get_dsps",
-          }),
+          body:
+            JSON.stringify({
+              action:
+                "get_dsps",
+            }),
         }
       );
 
@@ -520,7 +669,7 @@ export default function AdminReleasesPage() {
   }
 
   /* ====================================================
-     OPEN DSP SELECTOR
+     OPEN SINGLE DSP SELECTOR
   ==================================================== */
 
   async function openDSPSelector(
@@ -533,7 +682,9 @@ export default function AdminReleasesPage() {
     setSelectedDSPs([]);
     setExistingDSPs([]);
 
-    setLoadingDSPs(true);
+    setLoadingDSPs(
+      true
+    );
 
     try {
       const selected =
@@ -549,17 +700,21 @@ export default function AdminReleasesPage() {
         selected
           .map(
             (
-              item: DSPDelivery
+              item:
+                DSPDelivery
             ) =>
-              item.dsp_name ||
-              item.dsp ||
-              item.platform ||
-              ""
+              getDSPName(
+                item
+              )
           )
-          .filter(Boolean)
+          .filter(
+            Boolean
+          )
       );
     } catch (err) {
-      console.error(err);
+      console.error(
+        err
+      );
 
       alert(
         err instanceof Error
@@ -574,7 +729,7 @@ export default function AdminReleasesPage() {
   }
 
   /* ====================================================
-     TOGGLE DSP
+     SINGLE DSP TOGGLE
   ==================================================== */
 
   function toggleDSP(
@@ -588,20 +743,19 @@ export default function AdminReleasesPage() {
           ) === dsp
       );
 
-    /*
-     * Existing DSP records cannot
-     * accidentally be removed here.
-     */
     if (alreadySaved) {
       return;
     }
 
     setSelectedDSPs(
       (current) =>
-        current.includes(dsp)
+        current.includes(
+          dsp
+        )
           ? current.filter(
               (item) =>
-                item !== dsp
+                item !==
+                dsp
             )
           : [
               ...current,
@@ -609,10 +763,6 @@ export default function AdminReleasesPage() {
             ]
     );
   }
-
-  /* ====================================================
-     SELECT ALL DSP
-  ==================================================== */
 
   function selectAllDSPs() {
     setSelectedDSPs(
@@ -632,29 +782,26 @@ export default function AdminReleasesPage() {
     );
   }
 
-  /* ====================================================
-     CLEAR ONLY NEW DSP SELECTION
-  ==================================================== */
-
   function clearNewDSPSelection() {
-    const saved =
+    setSelectedDSPs(
       existingDSPs
-        .map(getDSPName)
+        .map(
+          getDSPName
+        )
         .filter(
           Boolean
-        );
-
-    setSelectedDSPs(
-      saved
+        )
     );
   }
 
   /* ====================================================
-     SAVE DSP SELECTION
+     SAVE SINGLE DSP SELECTION
   ==================================================== */
 
   async function saveDSPs() {
-    if (!selectedRelease) {
+    if (
+      !selectedRelease
+    ) {
       return;
     }
 
@@ -669,42 +816,22 @@ export default function AdminReleasesPage() {
       return;
     }
 
-    setSavingDSPs(true);
+    setSavingDSPs(
+      true
+    );
 
     try {
-      const response =
-        await fetch(
-          `/api/admin/releases/${selectedRelease.id}`,
+      const data =
+        await runReleaseAction(
+          selectedRelease.id,
           {
-            method: "PATCH",
+            action:
+              "save_dsps",
 
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body: JSON.stringify({
-              action:
-                "save_dsps",
-
-              dsps:
-                selectedDSPs,
-            }),
+            dsps:
+              selectedDSPs,
           }
         );
-
-      const data =
-        await response.json();
-
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ||
-            "Unable to save DSP selection."
-        );
-      }
 
       const deliveries =
         Array.isArray(
@@ -733,7 +860,9 @@ export default function AdminReleasesPage() {
         "DSP selection saved successfully."
       );
     } catch (err) {
-      console.error(err);
+      console.error(
+        err
+      );
 
       alert(
         err instanceof Error
@@ -748,7 +877,7 @@ export default function AdminReleasesPage() {
   }
 
   /* ====================================================
-     RELEASE ACTION
+     RELEASE STATUS ACTION
   ==================================================== */
 
   async function updateReleaseStatus(
@@ -801,38 +930,14 @@ export default function AdminReleasesPage() {
     );
 
     try {
-      const response =
-        await fetch(
-          `/api/admin/releases/${release.id}`,
+      const data =
+        await runReleaseAction(
+          release.id,
           {
-            method:
-              "PATCH",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body:
-              JSON.stringify({
-                action,
-                note,
-              }),
+            action,
+            note,
           }
         );
-
-      const data =
-        await response.json();
-
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ||
-            "Release action failed."
-        );
-      }
 
       alert(
         data.message ||
@@ -843,7 +948,9 @@ export default function AdminReleasesPage() {
         adminProfile
       );
     } catch (err) {
-      console.error(err);
+      console.error(
+        err
+      );
 
       alert(
         err instanceof Error
@@ -858,12 +965,7 @@ export default function AdminReleasesPage() {
   }
 
   /* ====================================================
-     APPROVE + SUBMIT TO TOO LOST
-
-     FIX:
-     It fetches DSPs for THIS release.
-     It no longer depends on whichever modal
-     happened to be opened previously.
+     INDIVIDUAL APPROVE
   ==================================================== */
 
   async function approveRelease(
@@ -892,7 +994,10 @@ export default function AdminReleasesPage() {
 
       const confirmed =
         confirm(
-          `Approve "${release.title || "Untitled"}" and submit it to Too Lost?`
+          `Approve "${
+            release.title ||
+            "Untitled"
+          }" and submit it to Too Lost?`
         );
 
       if (!confirmed) {
@@ -906,38 +1011,14 @@ export default function AdminReleasesPage() {
         actionKey
       );
 
-      const response =
-        await fetch(
-          `/api/admin/releases/${release.id}`,
+      const data =
+        await runReleaseAction(
+          release.id,
           {
-            method:
-              "PATCH",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body:
-              JSON.stringify({
-                action:
-                  "approve",
-              }),
+            action:
+              "approve",
           }
         );
-
-      const data =
-        await response.json();
-
-      if (
-        !response.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ||
-            "Too Lost submission failed."
-        );
-      }
 
       alert(
         data.message ||
@@ -983,62 +1064,34 @@ export default function AdminReleasesPage() {
               release.status
             );
 
+          const searchable =
+            [
+              release.title,
+              release.artist_name,
+              release.label_name,
+              release.white_label_name,
+              release.user_name,
+              release.user?.name,
+              release.user?.full_name,
+              release.uploaded_by_name,
+              release.user_email,
+              release.user?.email,
+              release.uploaded_by_email,
+              release.toolost_release_id,
+            ];
+
           const matchesSearch =
             !searchText ||
-            String(
-              release.title ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                searchText
-              ) ||
-            String(
-              release.artist_name ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                searchText
-              ) ||
-            String(
-              release.label_name ||
-                release.white_label_name ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                searchText
-              ) ||
-            String(
-  release.user_name ||
-    release.user?.name ||
-    release.user?.full_name ||
-    release.uploaded_by_name ||
-    ""
-)
-              .toLowerCase()
-              .includes(
-                searchText
-              ) ||
-            String(
-  release.user_email ||
-    release.user?.email ||
-    release.uploaded_by_email ||
-    ""
-)
-              .toLowerCase()
-              .includes(
-                searchText
-              ) ||
-            String(
-              release.toolost_release_id ||
-                ""
-            )
-              .toLowerCase()
-              .includes(
-                searchText
-              );
+            searchable.some(
+              (value) =>
+                String(
+                  value || ""
+                )
+                  .toLowerCase()
+                  .includes(
+                    searchText
+                  )
+            );
 
           const matchesStatus =
             statusFilter ===
@@ -1057,6 +1110,462 @@ export default function AdminReleasesPage() {
       search,
       statusFilter,
     ]);
+
+  /* ====================================================
+     BULK SELECT
+  ==================================================== */
+
+  const bulkSelectableReleases =
+    useMemo(
+      () =>
+        filteredReleases.filter(
+          (release) =>
+            BULK_APPROVABLE_STATUSES.includes(
+              normalizeStatus(
+                release.status
+              )
+            )
+        ),
+      [
+        filteredReleases,
+      ]
+    );
+
+  const selectedBulkReleases =
+    useMemo(
+      () =>
+        releases.filter(
+          (release) =>
+            bulkSelectedIds.includes(
+              release.id
+            ) &&
+            BULK_APPROVABLE_STATUSES.includes(
+              normalizeStatus(
+                release.status
+              )
+            )
+        ),
+      [
+        releases,
+        bulkSelectedIds,
+      ]
+    );
+
+  const allVisibleSelected =
+    bulkSelectableReleases.length >
+      0 &&
+    bulkSelectableReleases.every(
+      (release) =>
+        bulkSelectedIds.includes(
+          release.id
+        )
+    );
+
+  function toggleBulkRelease(
+    releaseId: string
+  ) {
+    setBulkSelectedIds(
+      (current) =>
+        current.includes(
+          releaseId
+        )
+          ? current.filter(
+              (id) =>
+                id !==
+                releaseId
+            )
+          : [
+              ...current,
+              releaseId,
+            ]
+    );
+  }
+
+  function toggleAllVisible() {
+    const visibleIds =
+      bulkSelectableReleases.map(
+        (release) =>
+          release.id
+      );
+
+    if (
+      visibleIds.length ===
+      0
+    ) {
+      return;
+    }
+
+    const everythingSelected =
+      visibleIds.every(
+        (id) =>
+          bulkSelectedIds.includes(
+            id
+          )
+      );
+
+    if (
+      everythingSelected
+    ) {
+      setBulkSelectedIds(
+        (current) =>
+          current.filter(
+            (id) =>
+              !visibleIds.includes(
+                id
+              )
+          )
+      );
+
+      return;
+    }
+
+    setBulkSelectedIds(
+      (current) =>
+        Array.from(
+          new Set([
+            ...current,
+            ...visibleIds,
+          ])
+        )
+    );
+  }
+
+  function clearBulkSelection() {
+    if (
+      bulkProcessing
+    ) {
+      return;
+    }
+
+    setBulkSelectedIds(
+      []
+    );
+  }
+
+  function openBulkModal() {
+    if (
+      selectedBulkReleases.length ===
+      0
+    ) {
+      alert(
+        "Please select at least one Draft/Pending release."
+      );
+
+      return;
+    }
+
+    setBulkDSPs(
+      []
+    );
+
+    setBulkErrors(
+      []
+    );
+
+    setBulkProgress({
+      done: 0,
+
+      total:
+        selectedBulkReleases.length,
+
+      success: 0,
+
+      failed: 0,
+    });
+
+    setBulkModalOpen(
+      true
+    );
+  }
+
+  function toggleBulkDSP(
+    dsp: string
+  ) {
+    if (
+      bulkProcessing
+    ) {
+      return;
+    }
+
+    setBulkDSPs(
+      (current) =>
+        current.includes(
+          dsp
+        )
+          ? current.filter(
+              (item) =>
+                item !==
+                dsp
+            )
+          : [
+              ...current,
+              dsp,
+            ]
+    );
+  }
+
+  function selectAllBulkDSPs() {
+    if (
+      bulkProcessing
+    ) {
+      return;
+    }
+
+    setBulkDSPs([
+      ...DSP_LIST,
+    ]);
+  }
+
+  function clearBulkDSPs() {
+    if (
+      bulkProcessing
+    ) {
+      return;
+    }
+
+    setBulkDSPs(
+      []
+    );
+  }
+
+  /* ====================================================
+     BULK DSP + APPROVE + SUBMIT
+  ==================================================== */
+
+  async function bulkApproveAndSubmit() {
+    if (
+      bulkProcessing
+    ) {
+      return;
+    }
+
+    const queue = [
+      ...selectedBulkReleases,
+    ];
+
+    if (
+      queue.length ===
+      0
+    ) {
+      alert(
+        "No eligible releases selected."
+      );
+
+      return;
+    }
+
+    if (
+      bulkDSPs.length ===
+      0
+    ) {
+      alert(
+        "Please select at least one DSP."
+      );
+
+      return;
+    }
+
+    const confirmed =
+      confirm(
+        `Apply ${bulkDSPs.length} DSP(s) and Approve + Submit ${queue.length} release(s) to Too Lost?\n\nThe releases will be processed in small batches.`
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkProcessing(
+      true
+    );
+
+    setBulkErrors(
+      []
+    );
+
+    setBulkProgress({
+      done: 0,
+
+      total:
+        queue.length,
+
+      success: 0,
+
+      failed: 0,
+    });
+
+    const failedIds:
+      string[] = [];
+
+    const errors:
+      string[] = [];
+
+    let successCount =
+      0;
+
+    let failedCount =
+      0;
+
+    /*
+     * Prevent 50 / 100 releases
+     * from hitting API simultaneously.
+     */
+
+    const BATCH_SIZE =
+      3;
+
+    try {
+      for (
+        let start = 0;
+        start <
+        queue.length;
+        start +=
+          BATCH_SIZE
+      ) {
+        const batch =
+          queue.slice(
+            start,
+            start +
+              BATCH_SIZE
+          );
+
+        await Promise.all(
+          batch.map(
+            async (
+              release
+            ) => {
+              try {
+                /*
+                 * STEP 1:
+                 * DSP SELECTION
+                 */
+
+                await runReleaseAction(
+                  release.id,
+                  {
+                    action:
+                      "save_dsps",
+
+                    dsps:
+                      bulkDSPs,
+                  }
+                );
+
+                /*
+                 * STEP 2:
+                 * APPROVE + SUBMIT
+                 */
+
+                await runReleaseAction(
+                  release.id,
+                  {
+                    action:
+                      "approve",
+                  }
+                );
+
+                successCount +=
+                  1;
+
+                setBulkProgress(
+                  (current) => ({
+                    ...current,
+
+                    done:
+                      current.done +
+                      1,
+
+                    success:
+                      current.success +
+                      1,
+                  })
+                );
+              } catch (
+                err
+              ) {
+                failedCount +=
+                  1;
+
+                failedIds.push(
+                  release.id
+                );
+
+                const message =
+                  err instanceof Error
+                    ? err.message
+                    : "Unknown error";
+
+                errors.push(
+                  `${
+                    release.title ||
+                    "Untitled"
+                  }: ${message}`
+                );
+
+                setBulkProgress(
+                  (current) => ({
+                    ...current,
+
+                    done:
+                      current.done +
+                      1,
+
+                    failed:
+                      current.failed +
+                      1,
+                  })
+                );
+              }
+            }
+          )
+        );
+      }
+
+      setBulkErrors(
+        errors
+      );
+
+      /*
+       * Failed releases stay selected.
+       */
+
+      setBulkSelectedIds(
+        failedIds
+      );
+
+      /*
+       * Refresh only once.
+       */
+
+      await loadReleases(
+        adminProfile
+      );
+
+      if (
+        failedCount ===
+        0
+      ) {
+        alert(
+          `${successCount} release(s) processed successfully.\n\nDSP selection saved and releases submitted to Too Lost.`
+        );
+
+        setBulkModalOpen(
+          false
+        );
+
+        setBulkDSPs(
+          []
+        );
+      } else {
+        alert(
+          `Bulk process completed.\n\nSuccessful: ${successCount}\nFailed: ${failedCount}\n\nFailed releases remain selected for retry.`
+        );
+      }
+    } finally {
+      setBulkProcessing(
+        false
+      );
+    }
+  }
 
   /* ====================================================
      COUNTS
@@ -1078,8 +1587,7 @@ export default function AdminReleasesPage() {
           );
 
         if (
-          status ===
-          "draft"
+          status === "draft"
         ) {
           draft += 1;
         }
@@ -1099,8 +1607,7 @@ export default function AdminReleasesPage() {
         }
 
         if (
-          status ===
-          "live"
+          status === "live"
         ) {
           live += 1;
         }
@@ -1109,7 +1616,8 @@ export default function AdminReleasesPage() {
           status ===
           "needs_docs"
         ) {
-          needsDocs += 1;
+          needsDocs +=
+            1;
         }
       }
 
@@ -1125,7 +1633,9 @@ export default function AdminReleasesPage() {
 
         needsDocs,
       };
-    }, [releases]);
+    }, [
+      releases,
+    ]);
 
   /* ====================================================
      UI
@@ -1157,7 +1667,10 @@ export default function AdminReleasesPage() {
                 adminProfile
               )
             }
-            disabled={loading}
+            disabled={
+              loading ||
+              bulkProcessing
+            }
             className="rounded-xl bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading
@@ -1222,10 +1735,11 @@ export default function AdminReleasesPage() {
                 search
               }
               onChange={(
-                e
+                event
               ) =>
                 setSearch(
-                  e.target
+                  event
+                    .target
                     .value
                 )
               }
@@ -1238,10 +1752,11 @@ export default function AdminReleasesPage() {
                 statusFilter
               }
               onChange={(
-                e
+                event
               ) =>
                 setStatusFilter(
-                  e.target
+                  event
+                    .target
                     .value
                 )
               }
@@ -1272,14 +1787,66 @@ export default function AdminReleasesPage() {
           </div>
         </div>
 
+        {/* BULK ACTION BAR */}
+
+        {bulkSelectedIds.length >
+          0 && (
+          <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-blue-500/20 bg-blue-500/[0.07] p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="font-semibold text-white">
+                {
+                  selectedBulkReleases.length
+                }{" "}
+                release(s)
+                selected
+              </div>
+
+              <div className="mt-1 text-xs text-zinc-500">
+                Bulk DSP selection
+                + Approve &
+                Submit
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={
+                  clearBulkSelection
+                }
+                disabled={
+                  bulkProcessing
+                }
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 hover:bg-white/10 disabled:opacity-40"
+              >
+                Clear Selection
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  openBulkModal
+                }
+                disabled={
+                  bulkProcessing ||
+                  selectedBulkReleases.length ===
+                    0
+                }
+                className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+              >
+                DSP + Approve &
+                Submit
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* RELEASE TABLE */}
 
         <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#0d1224]">
           {loading ? (
             <div className="p-12 text-center text-zinc-500">
-              Loading and
-              synchronizing
-              releases...
+              Loading releases...
             </div>
           ) : filteredReleases.length ===
             0 ? (
@@ -1288,9 +1855,30 @@ export default function AdminReleasesPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1450px]">
+              <table className="w-full min-w-[1500px]">
                 <thead className="border-b border-white/10 bg-black/20">
                   <tr className="text-left text-xs uppercase tracking-wider text-zinc-500">
+                    {/* BULK SELECT ALL */}
+
+                    <th className="w-12 px-5 py-4">
+                      <input
+                        type="checkbox"
+                        checked={
+                          allVisibleSelected
+                        }
+                        onChange={
+                          toggleAllVisible
+                        }
+                        disabled={
+                          bulkSelectableReleases.length ===
+                            0 ||
+                          bulkProcessing
+                        }
+                        className="h-4 w-4 cursor-pointer accent-blue-600"
+                        title="Select all eligible visible releases"
+                      />
+                    </th>
+
                     <th className="px-5 py-4">
                       Release
                     </th>
@@ -1335,6 +1923,11 @@ export default function AdminReleasesPage() {
                         actionLoading ===
                         `${release.id}-approve`;
 
+                      const canBulkApprove =
+                        BULK_APPROVABLE_STATUSES.includes(
+                          status
+                        );
+
                       return (
                         <tr
                           key={
@@ -1342,6 +1935,38 @@ export default function AdminReleasesPage() {
                           }
                           className="border-b border-white/5 hover:bg-white/[0.025]"
                         >
+                          {/* CHECKBOX */}
+
+                          <td className="w-12 px-5 py-5">
+                            <input
+                              type="checkbox"
+                              checked={
+                                bulkSelectedIds.includes(
+                                  release.id
+                                )
+                              }
+                              disabled={
+                                !canBulkApprove ||
+                                bulkProcessing
+                              }
+                              onChange={() =>
+                                toggleBulkRelease(
+                                  release.id
+                                )
+                              }
+                              className={`h-4 w-4 accent-blue-600 ${
+                                canBulkApprove
+                                  ? "cursor-pointer"
+                                  : "cursor-not-allowed opacity-30"
+                              }`}
+                              title={
+                                canBulkApprove
+                                  ? "Select release"
+                                  : "Only Draft/Pending releases can be bulk approved"
+                              }
+                            />
+                          </td>
+
                           {/* RELEASE */}
 
                           <td className="px-5 py-5">
@@ -1368,83 +1993,12 @@ export default function AdminReleasesPage() {
                           {/* LABEL / USER */}
 
                           <td className="px-5 py-5">
-  {(() => {
-    const submitterName =
-      release.user_name ||
-      release.user?.name ||
-      release.user?.full_name ||
-      release.uploaded_by_name ||
-      "Unknown User";
-
-    const submitterEmail =
-      release.user_email ||
-      release.user?.email ||
-      release.uploaded_by_email ||
-      "—";
-
-    const accountName =
-      release.white_label_name ||
-      release.white_label?.name ||
-      release.white_label?.brand_name ||
-      "Nexorael Direct";
-
-    const isWhiteLabel =
-      Boolean(
-        release.white_label_id
-      );
-
-    return (
-      <div className="min-w-[220px]">
-        {/* ACCOUNT / WHITE LABEL */}
-
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
-              isWhiteLabel
-                ? "border-purple-500/20 bg-purple-500/10 text-purple-300"
-                : "border-blue-500/20 bg-blue-500/10 text-blue-300"
-            }`}
-          >
-            {isWhiteLabel
-              ? "WHITE LABEL"
-              : "DIRECT ACCOUNT"}
-          </span>
-        </div>
-
-        <div className="mt-2 text-sm font-semibold text-white">
-          {accountName}
-        </div>
-
-        {/* WHO SUBMITTED */}
-
-        <div className="mt-2 border-t border-white/5 pt-2">
-          <div className="text-[10px] uppercase tracking-wider text-zinc-600">
-            Submitted By
-          </div>
-
-          <div className="mt-1 text-xs font-medium text-zinc-300">
-            {submitterName}
-          </div>
-
-          <div className="mt-0.5 text-[11px] text-zinc-600">
-            {submitterEmail}
-          </div>
-        </div>
-
-        {/* RELEASE LABEL */}
-
-        {release.label_name && (
-          <div className="mt-2 text-[11px] text-zinc-500">
-            Release Label:{" "}
-            <span className="text-zinc-400">
-              {release.label_name}
-            </span>
-          </div>
-        )}
-      </div>
-    );
-  })()}
-</td>
+                            <SubmitterCell
+                              release={
+                                release
+                              }
+                            />
+                          </td>
 
                           {/* TOO LOST ID */}
 
@@ -1487,8 +2041,6 @@ export default function AdminReleasesPage() {
 
                           <td className="px-5 py-5">
                             <div className="flex flex-wrap gap-2">
-                              {/* VIEW */}
-
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1501,8 +2053,6 @@ export default function AdminReleasesPage() {
                                 View
                               </button>
 
-                              {/* DSP */}
-
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1510,19 +2060,15 @@ export default function AdminReleasesPage() {
                                     release
                                   )
                                 }
-                                className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-400 hover:bg-blue-500/20"
+                                disabled={
+                                  bulkProcessing
+                                }
+                                className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-400 hover:bg-blue-500/20 disabled:opacity-40"
                               >
                                 DSP Select
                               </button>
 
-                              {/* APPROVE */}
-
-                              {[
-                                "draft",
-                                "pending",
-                                "under_review",
-                                "in_review",
-                              ].includes(
+                              {BULK_APPROVABLE_STATUSES.includes(
                                 status
                               ) && (
                                 <button
@@ -1533,7 +2079,8 @@ export default function AdminReleasesPage() {
                                     )
                                   }
                                   disabled={
-                                    approveLoading
+                                    approveLoading ||
+                                    bulkProcessing
                                   }
                                   className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold hover:bg-green-500 disabled:opacity-50"
                                 >
@@ -1542,8 +2089,6 @@ export default function AdminReleasesPage() {
                                     : "Approve & Submit"}
                                 </button>
                               )}
-
-                              {/* REJECT */}
 
                               {![
                                 "live",
@@ -1562,16 +2107,15 @@ export default function AdminReleasesPage() {
                                     )
                                   }
                                   disabled={
+                                    bulkProcessing ||
                                     actionLoading ===
-                                    `${release.id}-reject`
+                                      `${release.id}-reject`
                                   }
                                   className="rounded-lg bg-red-600/90 px-3 py-2 text-xs font-semibold hover:bg-red-500 disabled:opacity-50"
                                 >
                                   Reject
                                 </button>
                               )}
-
-                              {/* DRAFT */}
 
                               {[
                                 "pending",
@@ -1589,19 +2133,15 @@ export default function AdminReleasesPage() {
                                     )
                                   }
                                   disabled={
+                                    bulkProcessing ||
                                     actionLoading ===
-                                    `${release.id}-draft`
+                                      `${release.id}-draft`
                                   }
                                   className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs font-medium text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-50"
                                 >
                                   Draft
                                 </button>
                               )}
-
-                              {/* TAKEDOWN
-                                  Only actual live releases
-                                  should be taken down.
-                              */}
 
                               {status ===
                                 "live" && (
@@ -1614,8 +2154,9 @@ export default function AdminReleasesPage() {
                                     )
                                   }
                                   disabled={
+                                    bulkProcessing ||
                                     actionLoading ===
-                                    `${release.id}-takedown`
+                                      `${release.id}-takedown`
                                   }
                                   className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50"
                                 >
@@ -1644,14 +2185,12 @@ export default function AdminReleasesPage() {
       </div>
 
       {/* =================================================
-          DSP MODAL
+          SINGLE DSP MODAL
       ================================================= */}
 
       {selectedRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/10 bg-[#0d1224] shadow-2xl">
-            {/* HEADER */}
-
             <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0d1224] p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1684,8 +2223,6 @@ export default function AdminReleasesPage() {
               </div>
             </div>
 
-            {/* CONTENT */}
-
             <div className="p-6">
               {loadingDSPs ? (
                 <div className="p-10 text-center text-zinc-500">
@@ -1695,7 +2232,9 @@ export default function AdminReleasesPage() {
                 <>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {DSP_LIST.map(
-                      (dsp) => {
+                      (
+                        dsp
+                      ) => {
                         const selected =
                           selectedDSPs.includes(
                             dsp
@@ -1703,7 +2242,9 @@ export default function AdminReleasesPage() {
 
                         const alreadySaved =
                           existingDSPs.some(
-                            (item) =>
+                            (
+                              item
+                            ) =>
                               getDSPName(
                                 item
                               ) ===
@@ -1728,8 +2269,8 @@ export default function AdminReleasesPage() {
                               alreadySaved
                                 ? "cursor-not-allowed border-green-500/20 bg-green-500/5 opacity-60"
                                 : selected
-                                  ? "border-blue-500 bg-blue-500/10"
-                                  : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5"
+                                ? "border-blue-500 bg-blue-500/10"
+                                : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5"
                             }`}
                           >
                             <div>
@@ -1743,8 +2284,8 @@ export default function AdminReleasesPage() {
                                 {alreadySaved
                                   ? "Already selected"
                                   : selected
-                                    ? "Selected"
-                                    : "Available"}
+                                  ? "Selected"
+                                  : "Available"}
                               </p>
                             </div>
 
@@ -1766,8 +2307,6 @@ export default function AdminReleasesPage() {
                       }
                     )}
                   </div>
-
-                  {/* QUICK ACTIONS */}
 
                   <div className="mt-6 flex flex-wrap gap-3">
                     <button
@@ -1791,8 +2330,6 @@ export default function AdminReleasesPage() {
                       Selection
                     </button>
                   </div>
-
-                  {/* FOOTER */}
 
                   <div className="mt-6 flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm text-zinc-400">
@@ -1841,7 +2378,381 @@ export default function AdminReleasesPage() {
           </div>
         </div>
       )}
+
+      {/* =================================================
+          BULK DSP + APPROVE MODAL
+      ================================================= */}
+
+      {bulkModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-blue-500/20 bg-[#0d1224] shadow-2xl">
+            <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0d1224] p-6">
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-blue-400">
+                    Bulk Processing
+                  </div>
+
+                  <h2 className="mt-2 text-2xl font-bold">
+                    DSP + Approve &
+                    Submit
+                  </h2>
+
+                  <p className="mt-2 text-sm text-zinc-500">
+                    {
+                      selectedBulkReleases.length
+                    }{" "}
+                    release(s)
+                    selected
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={
+                    bulkProcessing
+                  }
+                  onClick={() =>
+                    setBulkModalOpen(
+                      false
+                    )
+                  }
+                  className="rounded-lg border border-white/10 px-3 py-2 text-zinc-400 hover:bg-white/5 disabled:opacity-30"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.07] p-4 text-sm text-yellow-200">
+                Selected DSPs
+                will be applied to
+                every selected
+                release before
+                approval and Too
+                Lost submission.
+              </div>
+
+              {/* DSP GRID */}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {DSP_LIST.map(
+                  (
+                    dsp
+                  ) => {
+                    const selected =
+                      bulkDSPs.includes(
+                        dsp
+                      );
+
+                    return (
+                      <button
+                        key={
+                          dsp
+                        }
+                        type="button"
+                        disabled={
+                          bulkProcessing
+                        }
+                        onClick={() =>
+                          toggleBulkDSP(
+                            dsp
+                          )
+                        }
+                        className={`flex items-center justify-between rounded-xl border p-4 text-left transition ${
+                          selected
+                            ? "border-blue-500 bg-blue-500/10"
+                            : "border-white/10 bg-black/20 hover:border-white/20"
+                        } disabled:opacity-50`}
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {
+                              dsp
+                            }
+                          </div>
+
+                          <div className="mt-1 text-xs text-zinc-600">
+                            {selected
+                              ? "Selected"
+                              : "Available"}
+                          </div>
+                        </div>
+
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-md border ${
+                            selected
+                              ? "border-blue-500 bg-blue-500"
+                              : "border-white/20"
+                          }`}
+                        >
+                          {selected
+                            ? "✓"
+                            : ""}
+                        </span>
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={
+                    selectAllBulkDSPs
+                  }
+                  disabled={
+                    bulkProcessing
+                  }
+                  className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  Select All DSPs
+                </button>
+
+                <button
+                  type="button"
+                  onClick={
+                    clearBulkDSPs
+                  }
+                  disabled={
+                    bulkProcessing
+                  }
+                  className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs hover:bg-white/10 disabled:opacity-40"
+                >
+                  Clear DSPs
+                </button>
+              </div>
+
+              {/* PROGRESS */}
+
+              {bulkProcessing && (
+                <div className="mt-7 rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>
+                      Processing
+                      releases...
+                    </span>
+
+                    <strong>
+                      {
+                        bulkProgress.done
+                      }
+                      /
+                      {
+                        bulkProgress.total
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all"
+                      style={{
+                        width:
+                          `${
+                            bulkProgress.total
+                              ? Math.round(
+                                  (bulkProgress.done /
+                                    bulkProgress.total) *
+                                    100
+                                )
+                              : 0
+                          }%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="mt-4 flex gap-5 text-xs">
+                    <span className="text-green-400">
+                      Success:{" "}
+                      {
+                        bulkProgress.success
+                      }
+                    </span>
+
+                    <span className="text-red-400">
+                      Failed:{" "}
+                      {
+                        bulkProgress.failed
+                      }
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* BULK ERRORS */}
+
+              {bulkErrors.length >
+                0 && (
+                <div className="mt-5 rounded-xl border border-red-500/20 bg-red-500/[0.06] p-4">
+                  <div className="font-semibold text-red-300">
+                    Failed
+                    Releases
+                  </div>
+
+                  <div className="mt-3 max-h-40 overflow-y-auto text-xs text-red-300/80">
+                    {bulkErrors.map(
+                      (
+                        item,
+                        index
+                      ) => (
+                        <div
+                          key={
+                            index
+                          }
+                          className="mb-2"
+                        >
+                          {
+                            item
+                          }
+                        </div>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* FOOTER */}
+
+              <div className="mt-7 flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-zinc-400">
+                  <strong className="text-white">
+                    {
+                      selectedBulkReleases.length
+                    }
+                  </strong>{" "}
+                  releases ·{" "}
+                  <strong className="text-white">
+                    {
+                      bulkDSPs.length
+                    }
+                  </strong>{" "}
+                  DSPs
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    disabled={
+                      bulkProcessing
+                    }
+                    onClick={() =>
+                      setBulkModalOpen(
+                        false
+                      )
+                    }
+                    className="rounded-xl border border-white/10 px-5 py-3 text-sm hover:bg-white/5 disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      bulkProcessing ||
+                      bulkDSPs.length ===
+                        0 ||
+                      selectedBulkReleases.length ===
+                        0
+                    }
+                    onClick={
+                      bulkApproveAndSubmit
+                    }
+                    className="rounded-xl bg-green-600 px-6 py-3 text-sm font-semibold text-white hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {bulkProcessing
+                      ? `Processing ${bulkProgress.done}/${bulkProgress.total}...`
+                      : "Apply DSPs + Approve & Submit"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
+  );
+}
+
+/* ======================================================
+   LABEL / USER CELL
+====================================================== */
+
+function SubmitterCell({
+  release,
+}: {
+  release: Release;
+}) {
+  const submitterName =
+    release.user_name ||
+    release.user?.name ||
+    release.user?.full_name ||
+    release.uploaded_by_name ||
+    "Unknown User";
+
+  const submitterEmail =
+    release.user_email ||
+    release.user?.email ||
+    release.uploaded_by_email ||
+    "—";
+
+  const accountName =
+    release.white_label_name ||
+    release.white_label?.name ||
+    release.white_label
+      ?.brand_name ||
+    "Nexorael Direct";
+
+  const isWhiteLabel =
+    Boolean(
+      release.white_label_id
+    );
+
+  return (
+    <div className="min-w-[220px]">
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+            isWhiteLabel
+              ? "border-purple-500/20 bg-purple-500/10 text-purple-300"
+              : "border-blue-500/20 bg-blue-500/10 text-blue-300"
+          }`}
+        >
+          {isWhiteLabel
+            ? "WHITE LABEL"
+            : "DIRECT ACCOUNT"}
+        </span>
+      </div>
+
+      <div className="mt-2 text-sm font-semibold text-white">
+        {accountName}
+      </div>
+
+      <div className="mt-2 border-t border-white/5 pt-2">
+        <div className="text-[10px] uppercase tracking-wider text-zinc-600">
+          Submitted By
+        </div>
+
+        <div className="mt-1 text-xs font-medium text-zinc-300">
+          {submitterName}
+        </div>
+
+        <div className="mt-0.5 text-[11px] text-zinc-600">
+          {submitterEmail}
+        </div>
+      </div>
+
+      {release.label_name && (
+        <div className="mt-2 text-[11px] text-zinc-500">
+          Release Label:{" "}
+          <span className="text-zinc-400">
+            {release.label_name}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1932,7 +2843,8 @@ function statusClass(
   }
 
   if (
-    value === "needs_docs"
+    value ===
+    "needs_docs"
   ) {
     return "bg-orange-500/10 text-orange-300 border-orange-500/20";
   }
@@ -1960,7 +2872,8 @@ function statusClass(
     value === "in_review" ||
     value ===
       "under_review" ||
-    value === "processing"
+    value ===
+      "processing"
   ) {
     return "bg-yellow-500/10 text-yellow-400 border-yellow-500/20";
   }
