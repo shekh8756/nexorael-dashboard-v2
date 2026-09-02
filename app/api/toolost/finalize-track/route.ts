@@ -143,48 +143,19 @@ export async function POST(
   String(composer).trim()
 ) {
   writers.push({
-    name:
-      String(
-        composer
-      ).trim(),
-
-    role: [
-      "Composer instrumentalist",
-    ],
+    name: String(composer).trim(),
+    role: "Composer instrumentalist",
   });
 }
-
-    if (
-      lyricist &&
-      String(lyricist).trim()
-    ) {
-      writers.push({
-        name:
-          String(
-            lyricist
-          ).trim(),
-
-        role: [
-  "Lyricist",
-],
-      });
-    }
-
-    if (
-      writer &&
-      String(writer).trim()
-    ) {
-      writers.push({
-        name:
-          String(
-            writer
-          ).trim(),
-
-        role: [
-          "writer",
-        ],
-      });
-    }
+if (
+  lyricist &&
+  String(lyricist).trim()
+) {
+  writers.push({
+    name: String(lyricist).trim(),
+    role: "Lyricist",
+  });
+}
 
     /*
      * Too Lost requires at least
