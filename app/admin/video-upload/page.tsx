@@ -1,20 +1,10 @@
 "use client";
 
-import {
-  useMemo,
-  useState,
-} from "react";
-
-import type {
-  ChangeEvent,
-  CSSProperties,
-} from "react";
-
+import { useMemo, useState } from "react";
+import type { ChangeEvent, CSSProperties, ReactNode } from "react";
 import SparkMD5 from "spark-md5";
 
-import {
-  supabase,
-} from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 /* ======================================================
    TYPES
@@ -39,120 +29,50 @@ type DeliveryState = {
    HELPERS
 ====================================================== */
 
-function clean(
-  value: unknown
-) {
-  return String(
-    value ?? ""
-  ).trim();
+function clean(value: unknown) {
+  return String(value ?? "").trim();
 }
 
-/*
- * Calculate real MD5 from selected video.
- */
+async function calculateMD5(file: File) {
+  const buffer = await file.arrayBuffer();
 
-async function calculateMD5(
-  file: File
-) {
-  const buffer =
-    await file.arrayBuffer();
-
-  const binary =
-    SparkMD5.ArrayBuffer.hash(
-      buffer
-    );
-
-  return binary;
+  return SparkMD5.ArrayBuffer.hash(buffer);
 }
 
-/*
- * Detect duration +
- * resolution from browser.
- */
+async function getVideoInfo(file: File): Promise<VideoInfo> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
 
-async function getVideoInfo(
-  file: File
-): Promise<VideoInfo> {
-  return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      const video =
-        document.createElement(
-          "video"
-        );
+    video.preload = "metadata";
 
-      const objectUrl =
-        URL.createObjectURL(
-          file
-        );
+    video.onloadedmetadata = () => {
+      const duration = Number(video.duration || 0);
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
 
-      video.preload =
-        "metadata";
+      URL.revokeObjectURL(objectUrl);
 
-      video.onloadedmetadata =
-        () => {
-          const duration =
-            Number(
-              video.duration ||
-                0
-            );
+      if (!duration || !width || !height) {
+        reject(new Error("Video metadata read nahi ho saka."));
+        return;
+      }
 
-          const width =
-            Number(
-              video.videoWidth ||
-                0
-            );
+      resolve({
+        duration,
+        width,
+        height,
+      });
+    };
 
-          const height =
-            Number(
-              video.videoHeight ||
-                0
-            );
+    video.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
 
-          URL.revokeObjectURL(
-            objectUrl
-          );
+      reject(new Error("Video file read nahi ho saka."));
+    };
 
-          if (
-            !duration ||
-            !width ||
-            !height
-          ) {
-            reject(
-              new Error(
-                "Video metadata read nahi ho saka."
-              )
-            );
-
-            return;
-          }
-
-          resolve({
-            duration,
-            width,
-            height,
-          });
-        };
-
-      video.onerror =
-        () => {
-          URL.revokeObjectURL(
-            objectUrl
-          );
-
-          reject(
-            new Error(
-              "Video file read nahi ho saka."
-            )
-          );
-        };
-
-      video.src =
-        objectUrl;
-    }
-  );
+    video.src = objectUrl;
+  });
 }
 
 /* ======================================================
@@ -160,181 +80,94 @@ async function getVideoInfo(
 ====================================================== */
 
 export default function VideoUploadPage() {
-  const [
-    releaseId,
-    setReleaseId,
-  ] =
-    useState("");
-
-    const [
-  artist,
-  setArtist,
-] = useState("");
-
-const [
-  composer,
-  setComposer,
-] = useState("");
-
-const [
-  lyricist,
-  setLyricist,
-] = useState("");
-
-  const [
-    videoFile,
-    setVideoFile,
-  ] =
-    useState<File | null>(
-      null
-    );
-
-  const [
-    videoType,
-    setVideoType,
-  ] =
-    useState(
-      "official_music_video"
-    );
-
-  const [
-    ageRestriction,
-    setAgeRestriction,
-  ] =
-    useState(
-      "all_ages"
-    );
-
-  const [
-    isCoverVersion,
-    setIsCoverVersion,
-  ] =
-    useState(false);
-
-  const [
-    referenceUpc,
-    setReferenceUpc,
-  ] =
-    useState("");
-
-  const [
-    referenceIsrc,
-    setReferenceIsrc,
-  ] =
-    useState("");
+  /*
+   * Too Lost MusicVideo draft ID.
+   * User manually enter nahi karega.
+   * Draft create hone ke baad yahan save hoga.
+   */
+  const [releaseId, setReleaseId] = useState("");
 
   /*
-   * Media metadata defaults.
-   *
-   * Resolution + duration
-   * automatically detected.
+   * Release metadata.
    */
+  const [title, setTitle] = useState("");
+  const [artist, setArtist] = useState("");
+  const [label, setLabel] = useState("");
 
-  const [
-    audioChannels,
-    setAudioChannels,
-  ] =
-    useState("2");
+  /*
+   * Credits.
+   */
+  const [composer, setComposer] = useState("");
+  const [lyricist, setLyricist] = useState("");
 
-  const [
-    audioCodec,
-    setAudioCodec,
-  ] =
-    useState("aac");
+  /*
+   * Video.
+   */
+  const [videoFile, setVideoFile] = useState<File | null>(null);
 
-  const [
-    audioSampleRate,
-    setAudioSampleRate,
-  ] =
-    useState("48000");
+  const [videoType, setVideoType] = useState(
+    "official_music_video"
+  );
 
-  const [
-    videoCodec,
-    setVideoCodec,
-  ] =
-    useState("h264");
+  const [ageRestriction, setAgeRestriction] = useState(
+    "all_ages"
+  );
 
-  const [
-    videoInfo,
-    setVideoInfo,
-  ] =
-    useState<VideoInfo | null>(
-      null
-    );
+  const [isCoverVersion, setIsCoverVersion] = useState(false);
 
-  const [
-    md5hash,
-    setMd5hash,
-  ] =
-    useState("");
+  const [referenceUpc, setReferenceUpc] = useState("");
+  const [referenceIsrc, setReferenceIsrc] = useState("");
 
-  const [
-    delivery,
-    setDelivery,
-  ] =
-    useState<DeliveryState>({
-      appleMusic: false,
-      boomplay: false,
-      spotify: false,
-      tidal: false,
+  /*
+   * Technical metadata.
+   */
+  const [audioChannels, setAudioChannels] = useState("2");
+  const [audioCodec, setAudioCodec] = useState("aac");
+  const [audioSampleRate, setAudioSampleRate] = useState("48000");
+  const [videoCodec, setVideoCodec] = useState("h264");
 
-      /*
-       * VEVO default ON.
-       */
-      vevo: true,
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(
+    null
+  );
 
-      youtubeVideo: false,
-    });
+  const [md5hash, setMd5hash] = useState("");
 
-  const [
-    processing,
-    setProcessing,
-  ] =
-    useState(false);
+  /*
+   * Delivery.
+   */
+  const [delivery, setDelivery] = useState<DeliveryState>({
+    appleMusic: false,
+    boomplay: false,
+    spotify: false,
+    tidal: false,
+    vevo: true,
+    youtubeVideo: false,
+  });
 
-  const [
-    progressMessage,
-    setProgressMessage,
-  ] =
-    useState("");
-
-  const [
-    successMessage,
-    setSuccessMessage,
-  ] =
-    useState("");
-
-  const [
-    errorMessage,
-    setErrorMessage,
-  ] =
-    useState("");
+  /*
+   * Status.
+   */
+  const [processing, setProcessing] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
   /* ====================================================
      DELIVERY COUNT
   ==================================================== */
 
-  const selectedDeliveryCount =
-    useMemo(
-      () =>
-        Object.values(
-          delivery
-        ).filter(Boolean)
-          .length,
-      [delivery]
-    );
+  const selectedDeliveryCount = useMemo(() => {
+    return Object.values(delivery).filter(Boolean).length;
+  }, [delivery]);
 
   /* ====================================================
      VIDEO SELECT
   ==================================================== */
 
   async function handleVideoSelect(
-    event:
-      ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>
   ) {
-    const file =
-      event.target
-        .files?.[0];
+    const file = event.target.files?.[0];
 
     if (!file) {
       return;
@@ -342,177 +175,146 @@ const [
 
     setSuccessMessage("");
     setErrorMessage("");
+    setProgressMessage("");
 
-    /*
-     * MP4 only for initial
-     * production version.
-     */
+    if (!/\.mp4$/i.test(file.name)) {
+      alert("Abhi sirf MP4 video allowed hai.");
 
-    if (
-      !/\.mp4$/i.test(
-        file.name
-      )
-    ) {
-      alert(
-        "Abhi sirf MP4 video allowed hai."
-      );
-
-      event.target.value =
-        "";
-
+      event.target.value = "";
       return;
     }
 
-    setVideoFile(
-      file
-    );
+    setVideoFile(file);
+    setVideoInfo(null);
+    setMd5hash("");
 
     try {
-      setProgressMessage(
-        "Reading video information..."
-      );
+      setProgressMessage("Reading video information...");
 
-      const info =
-        await getVideoInfo(
-          file
-        );
+      const info = await getVideoInfo(file);
 
-      setVideoInfo(
-        info
-      );
+      setVideoInfo(info);
 
-      setProgressMessage(
-        "Calculating MD5..."
-      );
+      setProgressMessage("Calculating MD5...");
 
-      const hash =
-        await calculateMD5(
-          file
-        );
+      const hash = await calculateMD5(file);
 
-      setMd5hash(
-        hash
-      );
+      setMd5hash(hash);
 
-      setProgressMessage(
-        "Video ready."
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        error
-      );
+      setProgressMessage("Video ready.");
+    } catch (error) {
+      console.error(error);
 
-      setVideoFile(
-        null
-      );
-
-      setVideoInfo(
-        null
-      );
-
-      setMd5hash(
-        ""
-      );
+      setVideoFile(null);
+      setVideoInfo(null);
+      setMd5hash("");
 
       setErrorMessage(
         error instanceof Error
           ? error.message
           : "Video processing failed."
       );
+
+      setProgressMessage("Failed.");
     }
   }
 
   /* ====================================================
-     DELIVERY TOGGLE
+     DELIVERY
   ==================================================== */
 
-  function toggleDelivery(
-    key:
-      keyof DeliveryState
-  ) {
-    setDelivery(
-      (previous) => ({
-        ...previous,
-
-        [key]:
-          !previous[key],
-      })
-    );
+  function toggleDelivery(key: keyof DeliveryState) {
+    setDelivery((previous) => ({
+      ...previous,
+      [key]: !previous[key],
+    }));
   }
 
   /* ====================================================
-     UPLOAD VIDEO -> SUPABASE
+     VIDEO -> SUPABASE
   ==================================================== */
 
-  async function uploadVideo(
-    file: File
-  ) {
-    const cleanName =
-      file.name
-        .replace(
-          /[^a-zA-Z0-9._-]/g,
-          "_"
-        )
-        .replace(
-          /_+/g,
-          "_"
-        );
+  async function uploadVideo(file: File) {
+    const cleanName = file.name
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .replace(/_+/g, "_");
 
-    const fileName =
-      `${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(
-          2,
-          8
-        )}-${cleanName}`;
+    const fileName = `${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}-${cleanName}`;
 
-    const {
-      error,
-    } =
-      await supabase.storage
-        .from(
-          "release-video"
-        )
-        .upload(
-          fileName,
-          file,
-          {
-            contentType:
-              file.type ||
-              "video/mp4",
-
-            upsert: false,
-          }
-        );
+    const { error } = await supabase.storage
+      .from("release-video")
+      .upload(fileName, file, {
+        contentType: file.type || "video/mp4",
+        upsert: false,
+      });
 
     if (error) {
-      throw new Error(
-        error.message
-      );
+      throw new Error(error.message);
     }
 
-    const {
-      data,
-    } =
-      supabase.storage
-        .from(
-          "release-video"
-        )
-        .getPublicUrl(
-          fileName
-        );
+    const { data } = supabase.storage
+      .from("release-video")
+      .getPublicUrl(fileName);
 
-    if (
-      !data.publicUrl
-    ) {
-      throw new Error(
-        "Video public URL missing."
-      );
+    if (!data.publicUrl) {
+      throw new Error("Video public URL missing.");
     }
 
     return data.publicUrl;
+  }
+
+  /* ====================================================
+     CREATE MUSIC VIDEO DRAFT
+  ==================================================== */
+
+  async function createMusicVideoDraft(accessToken: string) {
+    const response = await fetch(
+      "/api/toolost/releases/create-video",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+
+        body: JSON.stringify({
+          title: clean(title),
+          artist: clean(artist),
+          label: clean(label),
+        }),
+      }
+    );
+
+    const text = await response.text();
+
+    let data: any = {};
+
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `MusicVideo create API returned non-JSON (${response.status}).`
+      );
+    }
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+          data?.tooLostResponse?.message ||
+          "MusicVideo draft creation failed."
+      );
+    }
+
+    if (!data.releaseId) {
+      throw new Error(
+        "MusicVideo draft create hua lekin Release ID missing hai."
+      );
+    }
+
+    return String(data.releaseId);
   }
 
   /* ====================================================
@@ -528,393 +330,280 @@ const [
     setErrorMessage("");
 
     /*
-     * Validate admin session.
+     * -------------------------------------
+     * AUTH
+     * -------------------------------------
      */
 
     const {
       data: userData,
-      error:
-        userError,
-    } =
-      await supabase.auth
-        .getUser();
+      error: userError,
+    } = await supabase.auth.getUser();
 
-    if (
-      userError ||
-      !userData.user
-    ) {
-      setErrorMessage(
-        "Admin login required."
-      );
-
+    if (userError || !userData.user) {
+      setErrorMessage("Admin login required.");
       return;
     }
 
     const {
       data: profile,
-      error:
-        profileError,
-    } =
-      await supabase
-        .from(
-          "profiles"
-        )
-        .select(
-          "role"
-        )
-        .eq(
-          "id",
-          userData
-            .user.id
-        )
-        .maybeSingle();
+      error: profileError,
+    } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .maybeSingle();
 
     if (profileError) {
-      setErrorMessage(
-        profileError.message
-      );
-
+      setErrorMessage(profileError.message);
       return;
     }
 
-    const allowedRoles =
-      [
-        "master_admin",
-        "admin",
-        "white_label_admin",
-      ];
+    const allowedRoles = [
+      "master_admin",
+      "admin",
+      "white_label_admin",
+    ];
 
     if (
       !profile ||
-      !allowedRoles.includes(
-        String(
-          profile.role ||
-            ""
-        )
-      )
+      !allowedRoles.includes(String(profile.role || ""))
     ) {
-      setErrorMessage(
-        "Admin permission required."
-      );
+      setErrorMessage("Admin permission required.");
+      return;
+    }
 
+    const { data: sessionData } =
+      await supabase.auth.getSession();
+
+    const accessToken = sessionData.session?.access_token;
+
+    if (!accessToken) {
+      setErrorMessage("Admin session token missing.");
       return;
     }
 
     /*
-     * Session access token.
+     * -------------------------------------
+     * VALIDATION
+     * -------------------------------------
      */
 
-    const {
-      data:
-        sessionData,
-    } =
-      await supabase.auth
-        .getSession();
-
-    const accessToken =
-      sessionData
-        .session
-        ?.access_token;
-
-    if (!accessToken) {
-      setErrorMessage(
-        "Admin session token missing."
-      );
-
+    if (!clean(title)) {
+      setErrorMessage("Title required.");
       return;
     }
 
-    if (
-      !clean(
-        releaseId
-      )
-    ) {
-      setErrorMessage(
-        "Too Lost Release ID required."
-      );
-
+    if (!clean(artist)) {
+      setErrorMessage("Artist Name required.");
       return;
     }
-if (!clean(artist)) {
-  setErrorMessage(
-    "Artist Name required."
-  );
 
-  return;
-}
+    if (!clean(label)) {
+      setErrorMessage("Label required.");
+      return;
+    }
 
-if (!clean(composer)) {
-  setErrorMessage(
-    "Composer required."
-  );
+    if (!clean(composer)) {
+      setErrorMessage("Composer required.");
+      return;
+    }
 
-  return;
-}
     if (!videoFile) {
-      setErrorMessage(
-        "Video file select karo."
-      );
-
+      setErrorMessage("Video file select karo.");
       return;
     }
 
     if (!md5hash) {
       setErrorMessage(
-        "Video MD5 missing."
+        "Video MD5 abhi ready nahi hai. Thoda wait karo."
       );
-
       return;
     }
 
     if (!videoInfo) {
-      setErrorMessage(
-        "Video metadata missing."
-      );
-
+      setErrorMessage("Video metadata missing.");
       return;
     }
 
-    if (
-      selectedDeliveryCount ===
-      0
-    ) {
+    if (selectedDeliveryCount === 0) {
       setErrorMessage(
         "Kam se kam ek video platform select karo."
       );
-
       return;
     }
 
-    const channels =
-      Number(
-        audioChannels
-      );
+    const channels = Number(audioChannels);
+    const sampleRate = Number(audioSampleRate);
 
-    const sampleRate =
-      Number(
-        audioSampleRate
-      );
-
-    if (
-      !Number.isFinite(
-        channels
-      ) ||
-      channels < 1
-    ) {
-      setErrorMessage(
-        "Invalid audio channels."
-      );
-
+    if (!Number.isFinite(channels) || channels < 1) {
+      setErrorMessage("Invalid audio channels.");
       return;
     }
 
-    if (
-      !Number.isFinite(
-        sampleRate
-      ) ||
-      sampleRate < 1
-    ) {
-      setErrorMessage(
-        "Invalid audio sample rate."
-      );
-
+    if (!Number.isFinite(sampleRate) || sampleRate < 1) {
+      setErrorMessage("Invalid audio sample rate.");
       return;
     }
 
-    setProcessing(
-      true
-    );
+    /*
+     * -------------------------------------
+     * PROCESS
+     * -------------------------------------
+     */
+
+    setProcessing(true);
 
     try {
       /*
-       * =====================================
-       * STEP 1 - VIDEO -> SUPABASE
-       * =====================================
+       * STEP 1
+       *
+       * Create actual Too Lost MusicVideo draft.
+       *
+       * releaseId already available ho to
+       * retry ke time duplicate draft create nahi hoga.
+       */
+
+      let finalReleaseId = releaseId;
+
+      if (!finalReleaseId) {
+        setProgressMessage(
+          "Creating Too Lost MusicVideo draft..."
+        );
+
+        finalReleaseId = await createMusicVideoDraft(
+          accessToken
+        );
+
+        setReleaseId(finalReleaseId);
+
+        setProgressMessage(
+          `MusicVideo draft created: ${finalReleaseId}`
+        );
+      } else {
+        setProgressMessage(
+          `Using existing MusicVideo draft: ${finalReleaseId}`
+        );
+      }
+
+      /*
+       * STEP 2
+       *
+       * Upload MP4 to Supabase.
        */
 
       setProgressMessage(
         "Uploading video to storage..."
       );
 
-      const videoUrl =
-        await uploadVideo(
-          videoFile
-        );
+      const videoUrl = await uploadVideo(videoFile);
 
       /*
-       * =====================================
-       * STEP 2 - TOO LOST VIDEO METADATA
-       * =====================================
+       * STEP 3
+       *
+       * PATCH actual MusicVideo draft.
        */
 
       setProgressMessage(
         "Sending Music Video metadata to Too Lost..."
       );
 
-      const response =
-        await fetch(
-          "/api/toolost/releases/video",
-          {
-            method:
-              "POST",
+      const response = await fetch(
+        "/api/toolost/releases/video",
+        {
+          method: "POST",
 
-            headers: {
-              "Content-Type":
-                "application/json",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
 
-              Authorization:
-                `Bearer ${accessToken}`,
-            },
+          body: JSON.stringify({
+            releaseId: finalReleaseId,
 
-            body:
-  JSON.stringify({
-    releaseId:
-      clean(
-        releaseId
-      ),
+            artist: clean(artist),
 
-    artist:
-      clean(
-        artist
-      ),
+            composer: clean(composer),
 
-    composer:
-      clean(
-        composer
-      ),
+            lyricist:
+              clean(lyricist) || undefined,
 
-    lyricist:
-      clean(
-        lyricist
-      ) ||
-      undefined,
+            videoUrl,
 
-    videoUrl,
+            md5hash,
 
-                md5hash,
+            videoType,
 
-                videoType,
+            ageRestriction,
 
-                ageRestriction,
+            isCoverVersion,
 
-                isCoverVersion,
+            referenceUpc:
+              clean(referenceUpc) || undefined,
 
-                referenceUpc:
-                  clean(
-                    referenceUpc
-                  ) ||
-                  undefined,
+            referenceIsrc:
+              clean(referenceIsrc) || undefined,
 
-                referenceIsrc:
-                  clean(
-                    referenceIsrc
-                  ) ||
-                  undefined,
+            /*
+             * Delivery
+             */
 
-                /*
-                 * Delivery
-                 */
+            appleMusic: delivery.appleMusic,
+            boomplay: delivery.boomplay,
+            spotify: delivery.spotify,
+            tidal: delivery.tidal,
+            vevo: delivery.vevo,
+            youtubeVideo: delivery.youtubeVideo,
 
-                appleMusic:
-                  delivery.appleMusic,
+            /*
+             * Audio metadata
+             */
 
-                boomplay:
-                  delivery.boomplay,
+            audioChannels: channels,
+            audioCodec: clean(audioCodec),
+            audioSampleRate: sampleRate,
 
-                spotify:
-                  delivery.spotify,
+            /*
+             * Video metadata
+             */
 
-                tidal:
-                  delivery.tidal,
+            videoCodec: clean(videoCodec),
 
-                vevo:
-                  delivery.vevo,
+            videoDuration: videoInfo.duration,
 
-                youtubeVideo:
-                  delivery.youtubeVideo,
+            videoHeight: videoInfo.height,
+            videoWidth: videoInfo.width,
+          }),
+        }
+      );
 
-                /*
-                 * Audio metadata
-                 */
+      const text = await response.text();
 
-                audioChannels:
-                  channels,
-
-                audioCodec:
-                  clean(
-                    audioCodec
-                  ),
-
-                audioSampleRate:
-                  sampleRate,
-
-                /*
-                 * Video metadata
-                 */
-
-                videoCodec:
-                  clean(
-                    videoCodec
-                  ),
-
-                videoDuration:
-                  Math.round(
-                    videoInfo.duration
-                  ),
-
-                videoHeight:
-                  videoInfo.height,
-
-                videoWidth:
-                  videoInfo.width,
-              }),
-          }
-        );
-
-      const text =
-        await response.text();
-
-      let data: any =
-        {};
+      let data: any = {};
 
       try {
-        data =
-          JSON.parse(
-            text
-          );
+        data = JSON.parse(text);
       } catch {
         throw new Error(
           `Too Lost video API returned non-JSON (${response.status}).`
         );
       }
 
-      if (
-        !response.ok ||
-        !data.success
-      ) {
+      if (!response.ok || !data.success) {
         throw new Error(
           data.error ||
-            data
-              ?.tooLostResponse
-              ?.message ||
+            data?.tooLostResponse?.message ||
             "Too Lost video update failed."
         );
       }
 
-      setProgressMessage(
-        "Music Video saved."
-      );
+      setProgressMessage("Music Video saved.");
 
       setSuccessMessage(
-        `Success! Too Lost release ${releaseId} me video save ho gaya.`
+        `Success! Too Lost MusicVideo release ${finalReleaseId} me video save ho gaya.`
       );
-    } catch (
-      error
-    ) {
-      console.error(
-        "Video upload failed:",
-        error
-      );
+    } catch (error) {
+      console.error("Video upload failed:", error);
 
       setErrorMessage(
         error instanceof Error
@@ -922,14 +611,39 @@ if (!clean(composer)) {
           : "Video upload failed."
       );
 
-      setProgressMessage(
-        "Failed."
-      );
+      setProgressMessage("Failed.");
     } finally {
-      setProcessing(
-        false
-      );
+      setProcessing(false);
     }
+  }
+
+  /* ====================================================
+     RESET / NEW RELEASE
+  ==================================================== */
+
+  function startNewRelease() {
+    if (processing) {
+      return;
+    }
+
+    setReleaseId("");
+    setTitle("");
+    setArtist("");
+    setLabel("");
+    setComposer("");
+    setLyricist("");
+
+    setVideoFile(null);
+    setVideoInfo(null);
+    setMd5hash("");
+
+    setReferenceUpc("");
+    setReferenceIsrc("");
+    setIsCoverVersion(false);
+
+    setProgressMessage("");
+    setSuccessMessage("");
+    setErrorMessage("");
   }
 
   /* ====================================================
@@ -937,212 +651,169 @@ if (!clean(composer)) {
   ==================================================== */
 
   return (
-    <main
-      style={
-        pageStyle
-      }
-    >
-      <div
-        style={
-          headerStyle
-        }
-      >
+    <main style={pageStyle}>
+      <div style={headerStyle}>
         <div>
-          <div
-            style={
-              labelBadge
-            }
-          >
+          <div style={labelBadge}>
             MUSIC VIDEO
           </div>
 
           <h1
             style={{
-              margin:
-                "10px 0 4px",
+              margin: "10px 0 4px",
             }}
           >
             Music Video / VEVO
           </h1>
 
-          <p
-            style={
-              muted
-            }
-          >
-            Upload video and attach it to an existing Too Lost Music Video draft.
+          <p style={muted}>
+            Create a Too Lost MusicVideo draft and attach the
+            video automatically.
           </p>
         </div>
 
-        <div
-          style={
-            adminBadge
-          }
-        >
+        <div style={adminBadge}>
           ADMIN
         </div>
       </div>
 
-      {/* RELEASE */}
+      {/* =================================================
+          RELEASE
+      ================================================= */}
 
-      <section
-        style={
-          card
-        }
-      >
+      <section style={card}>
         <h2>
-          1. Too Lost Release
+          1. Music Video Release
         </h2>
 
-        <label
-          style={
-            labelStyle
-          }
-        >
-          Too Lost Release ID
-        </label>
+        <div style={technicalGrid}>
+          <Field>
+            <label style={labelStyle}>
+              Title *
+            </label>
 
-        <input
-          value={
-            releaseId
-          }
-          disabled={
-            processing
-          }
-          onChange={(
-            event
-          ) =>
-            setReleaseId(
-              event.target
-                .value
-            )
-          }
-          placeholder="Example: 1670153"
-          style={
-            inputStyle
-          }
-        />
+            <input
+              value={title}
+              disabled={processing || !!releaseId}
+              onChange={(event) =>
+                setTitle(event.target.value)
+              }
+              placeholder="Example: Dil Ki Baat"
+              style={inputStyle}
+            />
+          </Field>
 
-        <p
-          style={
-            helper
-          }
-        >
-          Existing draft Music Video release ka Too Lost ID enter karo.
+          <Field>
+            <label style={labelStyle}>
+              Artist Name *
+            </label>
+
+            <input
+              value={artist}
+              disabled={processing || !!releaseId}
+              onChange={(event) =>
+                setArtist(event.target.value)
+              }
+              placeholder="Example: Seema Raj"
+              style={inputStyle}
+            />
+          </Field>
+
+          <Field>
+            <label style={labelStyle}>
+              Label *
+            </label>
+
+            <input
+              value={label}
+              disabled={processing || !!releaseId}
+              onChange={(event) =>
+                setLabel(event.target.value)
+              }
+              placeholder="Example: ZENKAI"
+              style={inputStyle}
+            />
+          </Field>
+        </div>
+
+        {releaseId && (
+          <div style={successBox}>
+            MusicVideo Draft Created — Too Lost Release ID:{" "}
+            <strong>{releaseId}</strong>
+          </div>
+        )}
+      </section>
+
+      {/* =================================================
+          CREDITS
+      ================================================= */}
+
+      <section style={card}>
+        <h2>
+          2. Music Credits
+        </h2>
+
+        <div style={twoColumn}>
+          <Field>
+            <label style={labelStyle}>
+              Composer *
+            </label>
+
+            <input
+              value={composer}
+              disabled={processing}
+              onChange={(event) =>
+                setComposer(event.target.value)
+              }
+              placeholder="Example: Sonu Kumar"
+              style={inputStyle}
+            />
+          </Field>
+
+          <Field>
+            <label style={labelStyle}>
+              Lyricist
+            </label>
+
+            <input
+              value={lyricist}
+              disabled={processing}
+              onChange={(event) =>
+                setLyricist(event.target.value)
+              }
+              placeholder="Example: Ankit Kumar"
+              style={inputStyle}
+            />
+          </Field>
+        </div>
+
+        <p style={helper}>
+          Composer aur Lyricist same person ho sakte hain.
+          Backend duplicate writer ko combine karega.
         </p>
       </section>
 
-      {/* VIDEO */}
+      {/* =================================================
+          VIDEO
+      ================================================= */}
 
-      <section
-        style={
-          card
-        }
-      >
+      <section style={card}>
         <h2>
-        {/* MUSIC CREDITS */}
-
-<section
-  style={card}
->
-  <h2>
-    2. Music Credits
-  </h2>
-
-  <div
-    style={technicalGrid}
-  >
-    <Field>
-      <label
-        style={labelStyle}
-      >
-        Artist Name *
-      </label>
-
-      <input
-        value={artist}
-        disabled={processing}
-        onChange={(event) =>
-          setArtist(
-            event.target.value
-          )
-        }
-        placeholder="Example: Seema Khan"
-        style={inputStyle}
-      />
-    </Field>
-
-    <Field>
-      <label
-        style={labelStyle}
-      >
-        Composer *
-      </label>
-
-      <input
-        value={composer}
-        disabled={processing}
-        onChange={(event) =>
-          setComposer(
-            event.target.value
-          )
-        }
-        placeholder="Example: MD Sahid Miya"
-        style={inputStyle}
-      />
-    </Field>
-
-    <Field>
-      <label
-        style={labelStyle}
-      >
-        Lyricist
-      </label>
-
-      <input
-        value={lyricist}
-        disabled={processing}
-        onChange={(event) =>
-          setLyricist(
-            event.target.value
-          )
-        }
-        placeholder="Example: MD Sahid Miya"
-        style={inputStyle}
-      />
-    </Field>
-  </div>
-
-  <p style={helper}>
-    Composer aur Lyricist same person ho sakte hain.
-    System duplicate writer ko automatically combine karega.
-  </p>
-</section>
-          2. Video File
+          3. Video File
         </h2>
 
         <input
           type="file"
           accept=".mp4,video/mp4"
-          disabled={
-            processing
-          }
-          onChange={
-            handleVideoSelect
-          }
+          disabled={processing}
+          onChange={handleVideoSelect}
         />
 
         {videoFile && (
-          <div
-            style={
-              infoGrid
-            }
-          >
+          <div style={infoGrid}>
             <InfoBox
               label="File"
-              value={
-                videoFile.name
-              }
+              value={videoFile.name}
             />
 
             <InfoBox
@@ -1151,9 +822,7 @@ if (!clean(composer)) {
                 videoFile.size /
                 1024 /
                 1024
-              ).toFixed(
-                2
-              )} MB`}
+              ).toFixed(2)} MB`}
             />
 
             <InfoBox
@@ -1177,9 +846,7 @@ if (!clean(composer)) {
               label="Duration"
               value={
                 videoInfo
-                  ? `${Math.round(
-                      videoInfo.duration
-                    )} sec`
+                  ? `${videoInfo.duration.toFixed(2)} sec`
                   : "Reading..."
               }
             />
@@ -1187,127 +854,70 @@ if (!clean(composer)) {
         )}
       </section>
 
-      {/* TYPE */}
+      {/* =================================================
+          SETTINGS
+      ================================================= */}
 
-      <section
-        style={
-          card
-        }
-      >
+      <section style={card}>
         <h2>
-          3. Video Settings
+          4. Video Settings
         </h2>
 
-        <div
-          style={
-            twoColumn
-          }
-        >
+        <div style={twoColumn}>
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Video Type
             </label>
 
             <select
-              value={
-                videoType
+              value={videoType}
+              disabled={processing}
+              onChange={(event) =>
+                setVideoType(event.target.value)
               }
-              disabled={
-                processing
-              }
-              onChange={(
-                event
-              ) =>
-                setVideoType(
-                  event.target
-                    .value
-                )
-              }
-              style={
-                inputStyle
-              }
+              style={inputStyle}
             >
-              <option
-                value="official_music_video"
-              >
+              <option value="official_music_video">
                 Official Music Video
               </option>
 
-              <option
-                value="performance_video"
-              >
+              <option value="performance_video">
                 Performance Video
               </option>
             </select>
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Age Restriction
             </label>
 
             <select
-              value={
-                ageRestriction
+              value={ageRestriction}
+              disabled={processing}
+              onChange={(event) =>
+                setAgeRestriction(event.target.value)
               }
-              disabled={
-                processing
-              }
-              onChange={(
-                event
-              ) =>
-                setAgeRestriction(
-                  event.target
-                    .value
-                )
-              }
-              style={
-                inputStyle
-              }
+              style={inputStyle}
             >
-              <option
-                value="all_ages"
-              >
+              <option value="all_ages">
                 All Ages
               </option>
 
-              <option
-                value="18_plus"
-              >
+              <option value="18_plus">
                 18 Plus
               </option>
             </select>
           </Field>
         </div>
 
-        <label
-          style={
-            checkboxRow
-          }
-        >
+        <label style={checkboxRow}>
           <input
             type="checkbox"
-            checked={
-              isCoverVersion
-            }
-            disabled={
-              processing
-            }
-            onChange={(
-              event
-            ) =>
-              setIsCoverVersion(
-                event.target
-                  .checked
-              )
+            checked={isCoverVersion}
+            disabled={processing}
+            onChange={(event) =>
+              setIsCoverVersion(event.target.checked)
             }
           />
 
@@ -1318,466 +928,282 @@ if (!clean(composer)) {
           <div
             style={{
               ...twoColumn,
-              marginTop:
-                "16px",
+              marginTop: "16px",
             }}
           >
             <Field>
-              <label
-                style={
-                  labelStyle
-                }
-              >
+              <label style={labelStyle}>
                 Reference UPC
               </label>
 
               <input
-                value={
-                  referenceUpc
+                value={referenceUpc}
+                disabled={processing}
+                onChange={(event) =>
+                  setReferenceUpc(event.target.value)
                 }
-                disabled={
-                  processing
-                }
-                onChange={(
-                  event
-                ) =>
-                  setReferenceUpc(
-                    event.target
-                      .value
-                  )
-                }
-                style={
-                  inputStyle
-                }
+                style={inputStyle}
               />
             </Field>
 
             <Field>
-              <label
-                style={
-                  labelStyle
-                }
-              >
+              <label style={labelStyle}>
                 Reference ISRC
               </label>
 
               <input
-                value={
-                  referenceIsrc
+                value={referenceIsrc}
+                disabled={processing}
+                onChange={(event) =>
+                  setReferenceIsrc(event.target.value)
                 }
-                disabled={
-                  processing
-                }
-                onChange={(
-                  event
-                ) =>
-                  setReferenceIsrc(
-                    event.target
-                      .value
-                  )
-                }
-                style={
-                  inputStyle
-                }
+                style={inputStyle}
               />
             </Field>
           </div>
         )}
       </section>
 
-      {/* DELIVERY */}
+      {/* =================================================
+          DELIVERY
+      ================================================= */}
 
-      <section
-        style={
-          card
-        }
-      >
+      <section style={card}>
         <h2>
-          4. Video Distribution
+          5. Video Distribution
         </h2>
 
-        <p
-          style={
-            muted
-          }
-        >
+        <p style={muted}>
           Too Lost Music Video delivery targets.
         </p>
 
-        <div
-          style={
-            deliveryGrid
-          }
-        >
+        <div style={deliveryGrid}>
           <DeliveryBox
             label="VEVO"
-            checked={
-              delivery.vevo
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.vevo}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "vevo"
-              )
+              toggleDelivery("vevo")
             }
           />
 
           <DeliveryBox
             label="Apple Music"
-            checked={
-              delivery.appleMusic
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.appleMusic}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "appleMusic"
-              )
+              toggleDelivery("appleMusic")
             }
           />
 
           <DeliveryBox
             label="Spotify"
-            checked={
-              delivery.spotify
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.spotify}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "spotify"
-              )
+              toggleDelivery("spotify")
             }
           />
 
           <DeliveryBox
             label="Tidal"
-            checked={
-              delivery.tidal
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.tidal}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "tidal"
-              )
+              toggleDelivery("tidal")
             }
           />
 
           <DeliveryBox
             label="Boomplay"
-            checked={
-              delivery.boomplay
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.boomplay}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "boomplay"
-              )
+              toggleDelivery("boomplay")
             }
           />
 
           <DeliveryBox
             label="YouTube Video"
-            checked={
-              delivery.youtubeVideo
-            }
-            disabled={
-              processing
-            }
+            checked={delivery.youtubeVideo}
+            disabled={processing}
             onClick={() =>
-              toggleDelivery(
-                "youtubeVideo"
-              )
+              toggleDelivery("youtubeVideo")
             }
           />
         </div>
       </section>
 
-      {/* TECHNICAL */}
+      {/* =================================================
+          TECHNICAL
+      ================================================= */}
 
-      <section
-        style={
-          card
-        }
-      >
+      <section style={card}>
         <h2>
-          5. Technical Metadata
+          6. Technical Metadata
         </h2>
 
-        <div
-          style={
-            technicalGrid
-          }
-        >
+        <div style={technicalGrid}>
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Audio Channels
             </label>
 
             <input
               type="number"
-              value={
-                audioChannels
+              value={audioChannels}
+              onChange={(event) =>
+                setAudioChannels(event.target.value)
               }
-              onChange={(
-                event
-              ) =>
-                setAudioChannels(
-                  event.target
-                    .value
-                )
-              }
-              disabled={
-                processing
-              }
-              style={
-                inputStyle
-              }
+              disabled={processing}
+              style={inputStyle}
             />
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Audio Codec
             </label>
 
             <input
-              value={
-                audioCodec
+              value={audioCodec}
+              onChange={(event) =>
+                setAudioCodec(event.target.value)
               }
-              onChange={(
-                event
-              ) =>
-                setAudioCodec(
-                  event.target
-                    .value
-                )
-              }
-              disabled={
-                processing
-              }
-              style={
-                inputStyle
-              }
+              disabled={processing}
+              style={inputStyle}
             />
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Sample Rate
             </label>
 
             <input
               type="number"
-              value={
-                audioSampleRate
+              value={audioSampleRate}
+              onChange={(event) =>
+                setAudioSampleRate(event.target.value)
               }
-              onChange={(
-                event
-              ) =>
-                setAudioSampleRate(
-                  event.target
-                    .value
-                )
-              }
-              disabled={
-                processing
-              }
-              style={
-                inputStyle
-              }
+              disabled={processing}
+              style={inputStyle}
             />
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Video Codec
             </label>
 
             <input
-              value={
-                videoCodec
+              value={videoCodec}
+              onChange={(event) =>
+                setVideoCodec(event.target.value)
               }
-              onChange={(
-                event
-              ) =>
-                setVideoCodec(
-                  event.target
-                    .value
-                )
-              }
-              disabled={
-                processing
-              }
-              style={
-                inputStyle
-              }
+              disabled={processing}
+              style={inputStyle}
             />
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Width
             </label>
 
             <input
               readOnly
-              value={
-                videoInfo
-                  ?.width ||
-                ""
-              }
-              style={
-                inputStyle
-              }
+              value={videoInfo?.width || ""}
+              style={inputStyle}
             />
           </Field>
 
           <Field>
-            <label
-              style={
-                labelStyle
-              }
-            >
+            <label style={labelStyle}>
               Height
             </label>
 
             <input
               readOnly
-              value={
-                videoInfo
-                  ?.height ||
-                ""
-              }
-              style={
-                inputStyle
-              }
+              value={videoInfo?.height || ""}
+              style={inputStyle}
             />
           </Field>
         </div>
       </section>
 
-      {/* SUBMIT */}
+      {/* =================================================
+          SUBMIT
+      ================================================= */}
 
-      <section
-        style={
-          submitCard
-        }
-      >
+      <section style={submitCard}>
         <div>
           <strong>
             Selected Platforms:{" "}
-            {
-              selectedDeliveryCount
-            }
+            {selectedDeliveryCount}
           </strong>
 
           {progressMessage && (
-            <div
-              style={
-                helper
-              }
-            >
-              {
-                progressMessage
-              }
+            <div style={helper}>
+              {progressMessage}
             </div>
           )}
 
           {successMessage && (
-            <div
-              style={
-                successBox
-              }
-            >
-              {
-                successMessage
-              }
+            <div style={successBox}>
+              {successMessage}
             </div>
           )}
 
           {errorMessage && (
-            <div
-              style={
-                errorBox
-              }
-            >
-              {
-                errorMessage
-              }
+            <div style={errorBox}>
+              {errorMessage}
             </div>
           )}
         </div>
 
-        <button
-          type="button"
-          disabled={
-            processing
-          }
-          onClick={
-            submitVideo
-          }
-          style={{
-            ...primaryButton,
+        <div style={buttonRow}>
+          {releaseId && !processing && (
+            <button
+              type="button"
+              onClick={startNewRelease}
+              style={secondaryButton}
+            >
+              New Music Video
+            </button>
+          )}
 
-            opacity:
-              processing
-                ? 0.55
-                : 1,
-          }}
-        >
-          {processing
-            ? "Processing..."
-            : "Save Music Video"}
-        </button>
+          <button
+            type="button"
+            disabled={processing}
+            onClick={submitVideo}
+            style={{
+              ...primaryButton,
+              opacity: processing ? 0.55 : 1,
+            }}
+          >
+            {processing
+              ? "Processing..."
+              : releaseId
+              ? "Retry / Save Video"
+              : "Create & Save Music Video"}
+          </button>
+        </div>
       </section>
     </main>
   );
 }
 
 /* ======================================================
-   SMALL COMPONENTS
+   COMPONENTS
 ====================================================== */
 
 function Field({
   children,
 }: {
-  children:
-    React.ReactNode;
+  children: ReactNode;
 }) {
-  return (
-    <div>
-      {children}
-    </div>
-  );
+  return <div>{children}</div>;
 }
 
 function InfoBox({
@@ -1788,26 +1214,16 @@ function InfoBox({
   value: string;
 }) {
   return (
-    <div
-      style={
-        infoBox
-      }
-    >
-      <div
-        style={
-          helper
-        }
-      >
+    <div style={infoBox}>
+      <div style={helper}>
         {label}
       </div>
 
       <div
         style={{
-          marginTop:
-            "5px",
+          marginTop: "5px",
           fontWeight: 700,
-          wordBreak:
-            "break-word",
+          wordBreak: "break-word",
         }}
       >
         {value}
@@ -1830,44 +1246,34 @@ function DeliveryBox({
   return (
     <button
       type="button"
-      disabled={
-        disabled
-      }
-      onClick={
-        onClick
-      }
+      disabled={disabled}
+      onClick={onClick}
       style={{
         ...deliveryBox,
 
-        borderColor:
-          checked
-            ? "#2563EB"
-            : "#26364A",
+        borderColor: checked
+          ? "#2563EB"
+          : "#26364A",
 
-        background:
-          checked
-            ? "rgba(37,99,235,0.18)"
-            : "#0B1220",
+        background: checked
+          ? "rgba(37,99,235,0.18)"
+          : "#0B1220",
 
-        opacity:
-          disabled
-            ? 0.55
-            : 1,
+        opacity: disabled
+          ? 0.55
+          : 1,
       }}
     >
       <span
         style={{
           ...deliveryCheck,
 
-          background:
-            checked
-              ? "#2563EB"
-              : "transparent",
+          background: checked
+            ? "#2563EB"
+            : "transparent",
         }}
       >
-        {checked
-          ? "✓"
-          : ""}
+        {checked ? "✓" : ""}
       </span>
 
       {label}
@@ -1879,402 +1285,195 @@ function DeliveryBox({
    STYLES
 ====================================================== */
 
-const pageStyle:
-  CSSProperties = {
-  minHeight:
-    "100vh",
-
-  padding:
-    "28px",
-
-  background:
-    "#050816",
-
-  color:
-    "#F8FAFC",
+const pageStyle: CSSProperties = {
+  minHeight: "100vh",
+  padding: "28px",
+  background: "#050816",
+  color: "#F8FAFC",
 };
 
-const headerStyle:
-  CSSProperties = {
-  display:
-    "flex",
-
-  alignItems:
-    "center",
-
-  justifyContent:
-    "space-between",
-
-  marginBottom:
-    "22px",
+const headerStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: "22px",
 };
 
-const card:
-  CSSProperties = {
-  background:
-    "#0F172A",
-
-  border:
-    "1px solid #1E293B",
-
-  borderRadius:
-    "14px",
-
-  padding:
-    "20px",
-
-  marginBottom:
-    "18px",
+const card: CSSProperties = {
+  background: "#0F172A",
+  border: "1px solid #1E293B",
+  borderRadius: "14px",
+  padding: "20px",
+  marginBottom: "18px",
 };
 
-const submitCard:
-  CSSProperties = {
+const submitCard: CSSProperties = {
   ...card,
-
-  display:
-    "flex",
-
-  justifyContent:
-    "space-between",
-
-  alignItems:
-    "center",
-
-  gap:
-    "20px",
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "20px",
 };
 
-const muted:
-  CSSProperties = {
-  color:
-    "#94A3B8",
+const muted: CSSProperties = {
+  color: "#94A3B8",
 };
 
-const helper:
-  CSSProperties = {
-  color:
-    "#94A3B8",
-
-  fontSize:
-    "12px",
-
-  marginTop:
-    "7px",
+const helper: CSSProperties = {
+  color: "#94A3B8",
+  fontSize: "12px",
+  marginTop: "7px",
 };
 
-const labelStyle:
-  CSSProperties = {
-  display:
-    "block",
-
-  color:
-    "#CBD5E1",
-
-  fontSize:
-    "13px",
-
-  marginBottom:
-    "7px",
+const labelStyle: CSSProperties = {
+  display: "block",
+  color: "#CBD5E1",
+  fontSize: "13px",
+  marginBottom: "7px",
 };
 
-const inputStyle:
-  CSSProperties = {
-  width:
-    "100%",
-
-  minHeight:
-    "43px",
-
-  background:
-    "#020617",
-
-  border:
-    "1px solid #334155",
-
-  borderRadius:
-    "9px",
-
-  padding:
-    "0 12px",
-
-  color:
-    "#F8FAFC",
-
-  outline:
-    "none",
-
-  boxSizing:
-    "border-box",
+const inputStyle: CSSProperties = {
+  width: "100%",
+  minHeight: "43px",
+  background: "#020617",
+  border: "1px solid #334155",
+  borderRadius: "9px",
+  padding: "0 12px",
+  color: "#F8FAFC",
+  outline: "none",
+  boxSizing: "border-box",
 };
 
-const twoColumn:
-  CSSProperties = {
-  display:
-    "grid",
-
-  gridTemplateColumns:
-    "repeat(2,minmax(0,1fr))",
-
-  gap:
-    "16px",
+const twoColumn: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+  gap: "16px",
 };
 
-const technicalGrid:
-  CSSProperties = {
-  display:
-    "grid",
-
-  gridTemplateColumns:
-    "repeat(3,minmax(0,1fr))",
-
-  gap:
-    "16px",
+const technicalGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+  gap: "16px",
 };
 
-const infoGrid:
-  CSSProperties = {
-  display:
-    "grid",
-
-  gridTemplateColumns:
-    "repeat(5,minmax(0,1fr))",
-
-  gap:
-    "12px",
-
-  marginTop:
-    "18px",
+const infoGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(5,minmax(0,1fr))",
+  gap: "12px",
+  marginTop: "18px",
 };
 
-const infoBox:
-  CSSProperties = {
-  padding:
-    "13px",
-
-  background:
-    "#020617",
-
-  border:
-    "1px solid #1E293B",
-
-  borderRadius:
-    "10px",
+const infoBox: CSSProperties = {
+  padding: "13px",
+  background: "#020617",
+  border: "1px solid #1E293B",
+  borderRadius: "10px",
 };
 
-const checkboxRow:
-  CSSProperties = {
-  display:
-    "flex",
-
-  alignItems:
-    "center",
-
-  gap:
-    "9px",
-
-  marginTop:
-    "18px",
-
-  fontSize:
-    "13px",
+const checkboxRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "9px",
+  marginTop: "18px",
+  fontSize: "13px",
 };
 
-const deliveryGrid:
-  CSSProperties = {
-  display:
-    "grid",
-
-  gridTemplateColumns:
-    "repeat(3,minmax(0,1fr))",
-
-  gap:
-    "12px",
-
-  marginTop:
-    "16px",
+const deliveryGrid: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+  gap: "12px",
+  marginTop: "16px",
 };
 
-const deliveryBox:
-  CSSProperties = {
-  minHeight:
-    "55px",
-
-  display:
-    "flex",
-
-  alignItems:
-    "center",
-
-  gap:
-    "11px",
-
-  border:
-    "1px solid #26364A",
-
-  borderRadius:
-    "10px",
-
-  padding:
-    "0 14px",
-
-  color:
-    "#FFFFFF",
-
-  cursor:
-    "pointer",
-
-  fontWeight:
-    700,
-
-  textAlign:
-    "left",
+const deliveryBox: CSSProperties = {
+  minHeight: "55px",
+  display: "flex",
+  alignItems: "center",
+  gap: "11px",
+  border: "1px solid #26364A",
+  borderRadius: "10px",
+  padding: "0 14px",
+  color: "#FFFFFF",
+  cursor: "pointer",
+  fontWeight: 700,
+  textAlign: "left",
 };
 
-const deliveryCheck:
-  CSSProperties = {
-  width:
-    "20px",
-
-  height:
-    "20px",
-
-  border:
-    "1px solid #64748B",
-
-  borderRadius:
-    "5px",
-
-  display:
-    "inline-flex",
-
-  alignItems:
-    "center",
-
-  justifyContent:
-    "center",
-
-  color:
-    "#FFFFFF",
-
+const deliveryCheck: CSSProperties = {
+  width: "20px",
+  height: "20px",
+  border: "1px solid #64748B",
+  borderRadius: "5px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#FFFFFF",
   flexShrink: 0,
 };
 
-const primaryButton:
-  CSSProperties = {
-  minWidth:
-    "190px",
-
-  minHeight:
-    "46px",
-
-  padding:
-    "0 18px",
-
-  border:
-    "none",
-
-  borderRadius:
-    "10px",
-
-  background:
-    "#2563EB",
-
-  color:
-    "#FFFFFF",
-
-  fontWeight:
-    800,
-
-  cursor:
-    "pointer",
+const buttonRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
 };
 
-const labelBadge:
-  CSSProperties = {
-  display:
-    "inline-block",
-
-  padding:
-    "5px 9px",
-
-  border:
-    "1px solid rgba(59,130,246,.4)",
-
-  borderRadius:
-    "999px",
-
-  color:
-    "#60A5FA",
-
-  fontSize:
-    "10px",
-
-  fontWeight:
-    800,
+const primaryButton: CSSProperties = {
+  minWidth: "190px",
+  minHeight: "46px",
+  padding: "0 18px",
+  border: "none",
+  borderRadius: "10px",
+  background: "#2563EB",
+  color: "#FFFFFF",
+  fontWeight: 800,
+  cursor: "pointer",
 };
 
-const adminBadge:
-  CSSProperties = {
-  padding:
-    "7px 12px",
-
-  borderRadius:
-    "999px",
-
-  background:
-    "#1D4ED8",
-
-  fontSize:
-    "11px",
-
-  fontWeight:
-    800,
+const secondaryButton: CSSProperties = {
+  minHeight: "46px",
+  padding: "0 16px",
+  border: "1px solid #475569",
+  borderRadius: "10px",
+  background: "#0F172A",
+  color: "#E2E8F0",
+  fontWeight: 700,
+  cursor: "pointer",
 };
 
-const successBox:
-  CSSProperties = {
-  marginTop:
-    "10px",
-
-  padding:
-    "10px 12px",
-
-  borderRadius:
-    "8px",
-
-  background:
-    "rgba(22,101,52,.22)",
-
-  border:
-    "1px solid #166534",
-
-  color:
-    "#86EFAC",
-
-  fontSize:
-    "13px",
+const labelBadge: CSSProperties = {
+  display: "inline-block",
+  padding: "5px 9px",
+  border: "1px solid rgba(59,130,246,.4)",
+  borderRadius: "999px",
+  color: "#60A5FA",
+  fontSize: "10px",
+  fontWeight: 800,
 };
 
-const errorBox:
-  CSSProperties = {
-  marginTop:
-    "10px",
+const adminBadge: CSSProperties = {
+  padding: "7px 12px",
+  borderRadius: "999px",
+  background: "#1D4ED8",
+  fontSize: "11px",
+  fontWeight: 800,
+};
 
-  padding:
-    "10px 12px",
+const successBox: CSSProperties = {
+  marginTop: "10px",
+  padding: "10px 12px",
+  borderRadius: "8px",
+  background: "rgba(22,101,52,.22)",
+  border: "1px solid #166534",
+  color: "#86EFAC",
+  fontSize: "13px",
+};
 
-  borderRadius:
-    "8px",
-
-  background:
-    "rgba(153,27,27,.22)",
-
-  border:
-    "1px solid #991B1B",
-
-  color:
-    "#FCA5A5",
-
-  fontSize:
-    "13px",
+const errorBox: CSSProperties = {
+  marginTop: "10px",
+  padding: "10px 12px",
+  borderRadius: "8px",
+  background: "rgba(153,27,27,.22)",
+  border: "1px solid #991B1B",
+  color: "#FCA5A5",
+  fontSize: "13px",
 };
