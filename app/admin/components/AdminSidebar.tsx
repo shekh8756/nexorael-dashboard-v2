@@ -22,6 +22,11 @@ const menuItems = [
   href: "/admin/bulk-upload",
   icon: "⇧",
 },
+{
+  label: "Music Video / VEVO",
+  href: "/admin/video-upload",
+  icon: "▶",
+},
   {
     label: "Artists",
     href: "/admin/artists",
