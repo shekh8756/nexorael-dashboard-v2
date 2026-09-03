@@ -1082,7 +1082,7 @@ export async function PATCH(
       );
     }
 
-    const releaseRow =
+       const releaseRow =
       release as ReleaseRow;
 
     /*
@@ -1096,8 +1096,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             success: false,
-            error:
-              "Too Lost release ID is missing.",
+            error: "Too Lost release ID is missing.",
           },
           { status: 400 }
         );
@@ -1117,6 +1116,9 @@ export async function PATCH(
         );
       }
 
+      /*
+       * Delivery platforms must already be selected.
+       */
       if (
         !Array.isArray(releaseRow.selected_dsps) ||
         releaseRow.selected_dsps.length === 0
@@ -1124,121 +1126,451 @@ export async function PATCH(
         return NextResponse.json(
           {
             success: false,
-            error: "Please save delivery platforms before approving this release.",
+            error:
+              "Please save delivery platforms before approving this release.",
           },
           { status: 400 }
         );
       }
 
+      /*
+      =====================================================
+      LOAD SAVED REVIEW INFORMATION
+      =====================================================
+      */
+
+      const {
+        data: reviewInfo,
+        error: reviewInfoError,
+      } = await supabaseAdmin
+        .from("release_review_info")
+        .select(`
+          release_id,
+          review_note,
+          file_name,
+          file_type,
+          file_url,
+          storage_path
+        `)
+        .eq("release_id", id)
+        .maybeSingle();
+
+      if (reviewInfoError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Unable to load saved review information.",
+            details: reviewInfoError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      const reviewNote =
+        typeof reviewInfo?.review_note === "string"
+          ? reviewInfo.review_note
+              .trim()
+              .slice(0, 4000)
+          : "";
+
+      const reviewFileName =
+        typeof reviewInfo?.file_name === "string"
+          ? reviewInfo.file_name
+              .trim()
+              .slice(0, 255)
+          : "";
+
+      const reviewFileType =
+        typeof reviewInfo?.file_type === "string"
+          ? reviewInfo.file_type
+              .trim()
+              .slice(0, 40)
+          : "";
+
+      const reviewFileUrl =
+        typeof reviewInfo?.file_url === "string"
+          ? reviewInfo.file_url
+              .trim()
+              .slice(0, 2048)
+          : "";
+
+      const hasReviewInformation =
+        Boolean(
+          reviewNote ||
+          reviewFileUrl
+        );
 
       /*
-       * The release has already been created in Too Lost and therefore has a
-       * toolost_release_id. Admin approval should submit that existing release
-       * directly. DSP delivery settings are managed on the Too Lost release,
-       * so local dsp_deliveries platform IDs must not block approval.
-       */
-      {
-        const directSubmitPath =
-          `releases/${releaseRow.toolost_release_id}/submit`;
+      =====================================================
+      ATTACH REVIEW INFORMATION TO TOO LOST
+      =====================================================
 
-        const {
-          response: directSubmitResponse,
-          data: directSubmitData,
-        } = await tooLostApi(
-          accessToken,
-          directSubmitPath,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              acceptTerms: true,
-              confirmRights: true,
-              confirmYoutubeRights: true,
-            }),
-          }
-        );
+      Too Lost:
+      PATCH /releases/{releaseId}/metadata
 
-        console.log(
-          "Too Lost direct submit status:",
-          directSubmitResponse.status
-        );
-        console.log(
-          "Too Lost direct submit response:",
-          directSubmitData
-        );
+      review: {
+        fileName,
+        fileType,
+        fileUrl,
+        note
+      }
 
-        if (!directSubmitResponse.ok) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: "Too Lost submission failed.",
-              tooLostStatus: directSubmitResponse.status,
-              tooLostResponse: directSubmitData,
-            },
-            { status: 422 }
-          );
-        }
+      If this fails, submission stops.
+      */
 
-        const directAdminNote =
-          note || "Approved and submitted to Too Lost.";
+      let reviewMetadataResponse: any =
+        null;
 
-        const {
-          data: directlyUpdatedRelease,
-          error: directUpdateError,
-        } = await supabaseAdmin
-          .from("releases")
-          .update({
-            status: "approved",
-            admin_note: directAdminNote,
-          })
-          .eq("id", id)
-          .select("*")
-          .single();
-
-        if (directUpdateError) {
+      if (hasReviewInformation) {
+        /*
+         * If a document exists, all document metadata
+         * must exist before sending it to Too Lost.
+         */
+        if (
+          reviewFileUrl &&
+          (
+            !reviewFileName ||
+            !reviewFileType
+          )
+        ) {
           return NextResponse.json(
             {
               success: false,
               error:
-                "Too Lost submission succeeded, but local status update failed.",
-              details: directUpdateError.message,
+                "The saved review document is incomplete. File name or file type is missing. Please save Review Notes & PDF again.",
             },
-            { status: 500 }
+            { status: 400 }
           );
         }
 
-        if (releaseRow.user_id) {
-          try {
-            await supabaseAdmin
-              .from("notifications")
-              .insert({
-                user_id: releaseRow.user_id,
-                title: "Release Approved",
-                message:
-                  `Your release "${releaseRow.title || "Untitled"}" has been approved and submitted to Too Lost.`,
-                type: "approved",
-                is_read: false,
-              });
-          } catch (notificationError) {
-            console.error(
-              "Notification error:",
-              notificationError
-            );
-          }
-        }
+        const reviewPayload = {
+          review: {
+            fileName:
+              reviewFileName || null,
 
-        return NextResponse.json({
-          success: true,
-          message:
-            "Release approved and submitted to Too Lost successfully.",
-          status: "approved",
-          release: directlyUpdatedRelease,
-          tooLost: directSubmitData,
-        });
+            fileType:
+              reviewFileType || null,
+
+            fileUrl:
+              reviewFileUrl || null,
+
+            note:
+              reviewNote || null,
+          },
+        };
+
+        console.log(
+          "Too Lost review metadata payload:",
+          {
+            releaseId:
+              releaseRow.toolost_release_id,
+
+            review: {
+              fileName:
+                reviewPayload.review.fileName,
+
+              fileType:
+                reviewPayload.review.fileType,
+
+              fileUrl:
+                reviewPayload.review.fileUrl
+                  ? "[DOCUMENT URL PRESENT]"
+                  : null,
+
+              noteLength:
+                reviewNote.length,
+            },
+          }
+        );
+
+        const {
+          response: reviewResponse,
+          data: reviewResponseData,
+        } = await tooLostApi(
+          accessToken,
+          `releases/${releaseRow.toolost_release_id}/metadata`,
+          {
+            method: "PATCH",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify(
+              reviewPayload
+            ),
+          }
+        );
+
+        reviewMetadataResponse =
+          reviewResponseData;
+
+        console.log(
+          "Too Lost review metadata status:",
+          reviewResponse.status
+        );
+
+        console.log(
+          "Too Lost review metadata response:",
+          reviewResponseData
+        );
+
+        /*
+         * Critical:
+         * Do not submit if Too Lost did not accept
+         * the saved review information.
+         */
+        if (!reviewResponse.ok) {
+          return NextResponse.json(
+            {
+              success: false,
+
+              error:
+                (reviewResponseData as any)
+                  ?.message ||
+                (reviewResponseData as any)
+                  ?.error ||
+                "Too Lost rejected the Review Notes or supporting document.",
+
+              stage:
+                "review_metadata",
+
+              tooLostStatus:
+                reviewResponse.status,
+
+              tooLostResponse:
+                reviewResponseData,
+            },
+            {
+              status:
+                reviewResponse.status >= 400 &&
+                reviewResponse.status < 600
+                  ? reviewResponse.status
+                  : 422,
+            }
+          );
+        }
       }
 
+      /*
+      =====================================================
+      SUBMIT EXISTING TOO LOST RELEASE
+      =====================================================
+      */
+
+      const directSubmitPath =
+        `releases/${releaseRow.toolost_release_id}/submit`;
+
+      const {
+        response: directSubmitResponse,
+        data: directSubmitData,
+      } = await tooLostApi(
+        accessToken,
+        directSubmitPath,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            acceptTerms: true,
+            confirmRights: true,
+            confirmYoutubeRights: true,
+          }),
+        }
+      );
+
+      console.log(
+        "Too Lost direct submit status:",
+        directSubmitResponse.status
+      );
+
+      console.log(
+        "Too Lost direct submit response:",
+        directSubmitData
+      );
+
+      if (!directSubmitResponse.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+
+            error:
+              (directSubmitData as any)
+                ?.message ||
+              (directSubmitData as any)
+                ?.error ||
+              "Too Lost submission failed.",
+
+            stage: "submit",
+
+            tooLostStatus:
+              directSubmitResponse.status,
+
+            tooLostResponse:
+              directSubmitData,
+
+            /*
+             * The review information may have already
+             * been successfully attached even if
+             * submission itself failed.
+             */
+            reviewAttached:
+              hasReviewInformation,
+          },
+          { status: 422 }
+        );
+      }
+
+      /*
+      =====================================================
+      UPDATE LOCAL NEXORAEL STATUS
+      =====================================================
+
+      Too Lost submission does NOT mean the release is
+      already approved/live.
+
+      Therefore:
+      approved -> NO
+      pending  -> YES
+
+      API Sync will later obtain the real Too Lost status.
+      */
+
+      const directAdminNote =
+        hasReviewInformation
+          ? "Submitted to Too Lost with review information."
+          : note ||
+            "Submitted to Too Lost for review.";
+
+      const {
+        data: directlyUpdatedRelease,
+        error: directUpdateError,
+      } = await supabaseAdmin
+        .from("releases")
+        .update({
+          status: "pending",
+          admin_note:
+            directAdminNote,
+        })
+        .eq("id", id)
+        .select("*")
+        .single();
+
+      if (directUpdateError) {
+        return NextResponse.json(
+          {
+            success: false,
+
+            error:
+              "Too Lost submission succeeded, but local status update failed.",
+
+            details:
+              directUpdateError.message,
+
+            tooLostSubmitted: true,
+          },
+          { status: 500 }
+        );
+      }
+
+      /*
+      =====================================================
+      USER NOTIFICATION
+      =====================================================
+      */
+
+      if (releaseRow.user_id) {
+        try {
+          await supabaseAdmin
+            .from("notifications")
+            .insert({
+              user_id:
+                releaseRow.user_id,
+
+              title:
+                "Release Submitted",
+
+              message:
+                `Your release "${
+                  releaseRow.title ||
+                  "Untitled"
+                }" has been submitted for distribution review.`,
+
+              type:
+                "pending",
+
+              is_read:
+                false,
+            });
+        } catch (
+          notificationError
+        ) {
+          /*
+           * Notification failure must never turn
+           * a successful Too Lost submission into
+           * a failed submission.
+           */
+          console.error(
+            "Notification error:",
+            notificationError
+          );
+        }
+      }
+
+      /*
+      =====================================================
+      APPROVE SUCCESS
+      =====================================================
+      */
+
+      return NextResponse.json({
+        success: true,
+
+        message:
+          hasReviewInformation
+            ? "Review Notes/document attached and release submitted to Too Lost successfully."
+            : "Release submitted to Too Lost successfully.",
+
+        status:
+          "pending",
+
+        reviewAttached:
+          hasReviewInformation,
+
+        review:
+          hasReviewInformation
+            ? {
+                note:
+                  Boolean(
+                    reviewNote
+                  ),
+
+                file:
+                  Boolean(
+                    reviewFileUrl
+                  ),
+
+                fileName:
+                  reviewFileName ||
+                  null,
+              }
+            : null,
+
+        release:
+          directlyUpdatedRelease,
+
+        tooLost:
+          directSubmitData,
+
+        reviewTooLost:
+          reviewMetadataResponse,
+      });
     }
 
     /*
@@ -1268,17 +1600,22 @@ export async function PATCH(
     }
 
     /*
-    Reject / takedown reason.
+    =====================================================
+    REJECT / TAKEDOWN REASON
+    =====================================================
     */
 
     if (
-      (action === "reject" ||
-        action === "takedown") &&
+      (
+        action === "reject" ||
+        action === "takedown"
+      ) &&
       !note
     ) {
       return NextResponse.json(
         {
           success: false,
+
           error:
             action === "reject"
               ? "Rejection reason is required."
@@ -1304,11 +1641,19 @@ export async function PATCH(
 
     const adminNote =
       note ||
-      (action === "reject"
-        ? "Release rejected by admin."
-        : action === "takedown"
+      (
+        action === "reject"
+          ? "Release rejected by admin."
+          : action === "takedown"
           ? "Release taken down by admin."
-          : null);
+          : null
+      );
+
+    /*
+    =====================================================
+    UPDATE LOCAL RELEASE
+    =====================================================
+    */
 
     const {
       data: updatedRelease,
@@ -1316,8 +1661,11 @@ export async function PATCH(
     } = await supabaseAdmin
       .from("releases")
       .update({
-        status: newStatus,
-        admin_note: adminNote,
+        status:
+          newStatus,
+
+        admin_note:
+          adminNote,
       })
       .eq("id", id)
       .select("*")
@@ -1335,7 +1683,9 @@ export async function PATCH(
     }
 
     /*
-    Notification.
+    =====================================================
+    NOTIFICATION
+    =====================================================
     */
 
     if (releaseRow.user_id) {
@@ -1359,9 +1709,11 @@ export async function PATCH(
                 note
               ),
 
-            type: newStatus,
+            type:
+              newStatus,
 
-            is_read: false,
+            is_read:
+              false,
           });
       } catch (error) {
         console.error(
@@ -1398,9 +1750,12 @@ export async function PATCH(
 
     return NextResponse.json({
       success: true,
+
       message,
+
       release:
         updatedRelease,
+
       status:
         newStatus,
     });
@@ -1413,6 +1768,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
@@ -1422,6 +1778,12 @@ export async function PATCH(
     );
   }
 }
+
+/*
+=========================================================
+NOTIFICATION HELPERS
+=========================================================
+*/
 
 function getNotificationTitle(
   action: Action

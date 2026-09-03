@@ -185,7 +185,39 @@ export default function AdminReleasesPage() {
 
   const [actionLoading, setActionLoading] =
     useState<string | null>(null);
+  /* ====================================================
+     REVIEW NOTES + DOCUMENT
+  ==================================================== */
 
+  const [reviewModalOpen, setReviewModalOpen] =
+    useState(false);
+
+  const [reviewReleaseIds, setReviewReleaseIds] =
+    useState<string[]>([]);
+
+  const [reviewReleaseTitles, setReviewReleaseTitles] =
+    useState<string[]>([]);
+
+  const [reviewNote, setReviewNote] =
+    useState("");
+
+  const [reviewFile, setReviewFile] =
+    useState<File | null>(null);
+
+  const [reviewExistingFileName, setReviewExistingFileName] =
+    useState("");
+
+  const [reviewExistingFileUrl, setReviewExistingFileUrl] =
+    useState("");
+
+  const [reviewSaving, setReviewSaving] =
+    useState(false);
+
+  const [reviewLoading, setReviewLoading] =
+    useState(false);
+
+  const [reviewSavedIds, setReviewSavedIds] =
+    useState<string[]>([]);
   /* ====================================================
      BULK RELEASE ACTIONS
   ==================================================== */
@@ -832,7 +864,478 @@ export default function AdminReleasesPage() {
       setActionLoading(null);
     }
   }
+  /* ====================================================
+     REVIEW NOTES + DOCUMENT FUNCTIONS
+  ==================================================== */
 
+  async function getAdminAccessToken() {
+    const {
+      data,
+      error,
+    } = await supabase.auth.getSession();
+
+    if (
+      error ||
+      !data.session?.access_token
+    ) {
+      throw new Error(
+        "Admin session expired. Please login again."
+      );
+    }
+
+    return data.session.access_token;
+  }
+
+  async function openReviewModal(
+    selected: Release[]
+  ) {
+    if (!selected.length) {
+      alert(
+        "Please select at least one release."
+      );
+      return;
+    }
+
+    const ids = selected.map(
+      (release) => release.id
+    );
+
+    const titles = selected.map(
+      (release) =>
+        release.title ||
+        "Untitled Release"
+    );
+
+    setReviewReleaseIds(ids);
+    setReviewReleaseTitles(titles);
+
+    setReviewNote("");
+    setReviewFile(null);
+
+    setReviewExistingFileName("");
+    setReviewExistingFileUrl("");
+
+    setReviewModalOpen(true);
+
+    /*
+     * Existing review is loaded only for
+     * a single release.
+     */
+    if (selected.length !== 1) {
+      return;
+    }
+
+    setReviewLoading(true);
+
+    try {
+      const accessToken =
+        await getAdminAccessToken();
+
+      const response = await fetch(
+        `/api/admin/releases/review-info?releaseId=${encodeURIComponent(
+          selected[0].id
+        )}&t=${Date.now()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        data?.success === false
+      ) {
+        throw new Error(
+          data?.error ||
+          "Unable to load review information."
+        );
+      }
+
+      if (data?.review) {
+        setReviewNote(
+          String(
+            data.review.review_note ||
+            ""
+          )
+        );
+
+        setReviewExistingFileName(
+          String(
+            data.review.file_name ||
+            ""
+          )
+        );
+
+        setReviewExistingFileUrl(
+          String(
+            data.review.file_url ||
+            ""
+          )
+        );
+
+        setReviewSavedIds(
+          (current) =>
+            Array.from(
+              new Set([
+                ...current,
+                selected[0].id,
+              ])
+            )
+        );
+      }
+    } catch (err) {
+      console.error(
+        "LOAD REVIEW:",
+        err
+      );
+
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Unable to load review information."
+      );
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  function closeReviewModal() {
+    if (reviewSaving) {
+      return;
+    }
+
+    setReviewModalOpen(false);
+
+    setReviewReleaseIds([]);
+    setReviewReleaseTitles([]);
+
+    setReviewNote("");
+    setReviewFile(null);
+
+    setReviewExistingFileName("");
+    setReviewExistingFileUrl("");
+  }
+
+  function handleReviewFile(
+    file: File | null
+  ) {
+    if (!file) {
+      setReviewFile(null);
+      return;
+    }
+
+    const allowedTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "text/plain",
+    ];
+
+    if (
+      !allowedTypes.includes(
+        file.type
+      )
+    ) {
+      alert(
+        "Only PDF, JPG, PNG and TXT files are allowed."
+      );
+
+      return;
+    }
+
+    const MAX_FILE_SIZE =
+      20 * 1024 * 1024;
+
+    if (
+      file.size >
+      MAX_FILE_SIZE
+    ) {
+      alert(
+        "Maximum document size is 20 MB."
+      );
+
+      return;
+    }
+
+    if (
+      file.name.length >
+      255
+    ) {
+      alert(
+        "File name is too long."
+      );
+
+      return;
+    }
+
+    setReviewFile(file);
+  }
+
+  function sanitizeReviewFileName(
+    fileName: string
+  ) {
+    return fileName
+      .replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      )
+      .slice(0, 180);
+  }
+
+  function getFileTypeFromName(
+    fileName: string
+  ) {
+    const name =
+      fileName.toLowerCase();
+
+    if (
+      name.endsWith(".pdf")
+    ) {
+      return "application/pdf";
+    }
+
+    if (
+      name.endsWith(".jpg") ||
+      name.endsWith(".jpeg")
+    ) {
+      return "image/jpeg";
+    }
+
+    if (
+      name.endsWith(".png")
+    ) {
+      return "image/png";
+    }
+
+    if (
+      name.endsWith(".txt")
+    ) {
+      return "text/plain";
+    }
+
+    return "";
+  }
+
+  async function saveReviewInformation() {
+    if (
+      reviewReleaseIds.length === 0
+    ) {
+      alert(
+        "No release selected."
+      );
+
+      return;
+    }
+
+    const cleanNote =
+      reviewNote.trim();
+
+    if (
+      cleanNote.length >
+      4000
+    ) {
+      alert(
+        "Review notes cannot exceed 4000 characters."
+      );
+
+      return;
+    }
+
+    if (
+      !cleanNote &&
+      !reviewFile &&
+      !reviewExistingFileUrl
+    ) {
+      alert(
+        "Please enter review notes or upload a supporting document."
+      );
+
+      return;
+    }
+
+    setReviewSaving(true);
+
+    try {
+      const accessToken =
+        await getAdminAccessToken();
+
+      let fileName =
+        reviewExistingFileName;
+
+      let fileType =
+        reviewExistingFileName
+          ? getFileTypeFromName(
+              reviewExistingFileName
+            )
+          : "";
+
+      let fileUrl =
+        reviewExistingFileUrl;
+
+      let storagePath = "";
+
+      /*
+       * UPLOAD NEW FILE
+       */
+      if (reviewFile) {
+        const safeName =
+          sanitizeReviewFileName(
+            reviewFile.name
+          );
+
+        storagePath =
+          `admin-review/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+
+        const {
+          error: uploadError,
+        } = await supabase.storage
+          .from(
+            "release-review-documents"
+          )
+          .upload(
+            storagePath,
+            reviewFile,
+            {
+              upsert: false,
+
+              cacheControl:
+                "3600",
+
+              contentType:
+                reviewFile.type,
+            }
+          );
+
+        if (uploadError) {
+          throw new Error(
+            `Document upload failed: ${uploadError.message}`
+          );
+        }
+
+        const {
+          data: publicData,
+        } = supabase.storage
+          .from(
+            "release-review-documents"
+          )
+          .getPublicUrl(
+            storagePath
+          );
+
+        if (
+          !publicData?.publicUrl
+        ) {
+          throw new Error(
+            "Unable to generate document public URL."
+          );
+        }
+
+        fileName =
+          reviewFile.name.slice(
+            0,
+            255
+          );
+
+        fileType =
+          reviewFile.type.slice(
+            0,
+            40
+          );
+
+        fileUrl =
+          publicData.publicUrl;
+      }
+
+      /*
+       * SAVE INTO ADMIN API
+       */
+      const response = await fetch(
+        "/api/admin/releases/review-info",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+
+            Authorization:
+              `Bearer ${accessToken}`,
+          },
+
+          body: JSON.stringify({
+            releaseIds:
+              reviewReleaseIds,
+
+            reviewNote:
+              cleanNote,
+
+            fileName:
+              fileName || null,
+
+            fileType:
+              fileType || null,
+
+            fileUrl:
+              fileUrl || null,
+
+            storagePath:
+              storagePath || null,
+          }),
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        data?.success === false
+      ) {
+        throw new Error(
+          data?.error ||
+          "Unable to save review information."
+        );
+      }
+
+      setReviewSavedIds(
+        (current) =>
+          Array.from(
+            new Set([
+              ...current,
+              ...reviewReleaseIds,
+            ])
+          )
+      );
+
+      alert(
+        data?.message ||
+        "Review information saved successfully."
+      );
+
+      closeReviewModal();
+    } catch (err) {
+      console.error(
+        "SAVE REVIEW:",
+        err
+      );
+
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Unable to save review information."
+      );
+    } finally {
+      setReviewSaving(false);
+    }
+  }
   /* ====================================================
      INDIVIDUAL APPROVE
   ==================================================== */
@@ -1514,7 +2017,23 @@ export default function AdminReleasesPage() {
                 {selectedBulkReleases.length}{" "}
                 release(s) selected
               </div>
-
+              <button
+                type="button"
+                onClick={() =>
+                  openReviewModal(
+                    selectedBulkReleases
+                  )
+                }
+                disabled={
+                  bulkProcessing ||
+                  reviewSaving ||
+                  selectedBulkReleases.length ===
+                    0
+                }
+                className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-5 py-2 text-sm font-semibold text-purple-200 hover:bg-purple-500/20 disabled:opacity-40"
+              >
+                Review Notes & PDF
+              </button>
               <div className="mt-1 text-xs text-zinc-500">
                 Bulk DSP selection + Approve &
                 Submit
@@ -1754,7 +2273,25 @@ export default function AdminReleasesPage() {
                               >
                                 DSP Select
                               </button>
-
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openReviewModal([
+                                    release,
+                                  ])
+                                }
+                                disabled={
+                                  bulkProcessing ||
+                                  reviewSaving
+                                }
+                                className="rounded-lg border border-purple-500/20 bg-purple-500/10 px-3 py-2 text-xs font-medium text-purple-300 hover:bg-purple-500/20 disabled:opacity-40"
+                              >
+                                {reviewSavedIds.includes(
+                                  release.id
+                                )
+                                  ? "Review ✓"
+                                  : "Review Notes & PDF"}
+                              </button>
                               {BULK_APPROVABLE_STATUSES.includes(
                                 status
                               ) && (
@@ -1864,7 +2401,309 @@ export default function AdminReleasesPage() {
           )}
         </div>
       </div>
+      {/* =================================================
+          REVIEW NOTES + PDF MODAL
+      ================================================= */}
 
+      {reviewModalOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-purple-500/20 bg-[#0d1224] shadow-2xl">
+
+            {/* HEADER */}
+
+            <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0d1224] p-6">
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-purple-400">
+                    Too Lost Review Information
+                  </div>
+
+                  <h2 className="mt-2 text-2xl font-bold">
+                    Review Notes & PDF
+                  </h2>
+
+                  <p className="mt-2 text-sm text-zinc-500">
+                    {reviewReleaseIds.length}{" "}
+                    release(s) selected
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={
+                    closeReviewModal
+                  }
+                  disabled={
+                    reviewSaving
+                  }
+                  className="rounded-lg border border-white/10 px-3 py-2 text-zinc-400 hover:bg-white/5 disabled:opacity-40"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* BODY */}
+
+            <div className="p-6">
+              {reviewLoading ? (
+                <div className="py-14 text-center text-zinc-500">
+                  Loading saved review information...
+                </div>
+              ) : (
+                <>
+                  {/* RELEASE LIST */}
+
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                      Selected Releases
+                    </div>
+
+                    <div className="mt-3 max-h-32 overflow-y-auto">
+                      {reviewReleaseTitles.map(
+                        (
+                          title,
+                          index
+                        ) => (
+                          <div
+                            key={`${index}-${title}`}
+                            className="mb-1 text-sm text-zinc-300"
+                          >
+                            {index + 1}.{" "}
+                            {title}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  {/* NOTES */}
+
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-semibold">
+                        Review Notes
+                      </label>
+
+                      <span className="text-xs text-zinc-500">
+                        {reviewNote.length}
+                        /4000
+                      </span>
+                    </div>
+
+                    <p className="mt-2 text-xs leading-5 text-zinc-500">
+                      Add AI approvals, licenses,
+                      rights information, sample
+                      clearances, label waivers or
+                      anything else Too Lost should
+                      know.
+                    </p>
+
+                    <textarea
+                      value={
+                        reviewNote
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setReviewNote(
+                          event.target.value.slice(
+                            0,
+                            4000
+                          )
+                        )
+                      }
+                      maxLength={4000}
+                      rows={8}
+                      placeholder="Anything else Too Lost should know?"
+                      className="mt-3 w-full resize-y rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none placeholder:text-zinc-600 focus:border-purple-500"
+                    />
+                  </div>
+
+                  {/* DOCUMENT */}
+
+                  <div className="mt-6">
+                    <label className="text-sm font-semibold">
+                      Supporting Document
+                    </label>
+
+                    <p className="mt-2 text-xs text-zinc-500">
+                      PDF, JPG, PNG or TXT · Maximum
+                      20 MB
+                    </p>
+
+                    <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/20 p-7 text-center hover:border-purple-500/50 hover:bg-purple-500/[0.04]">
+                      <div className="text-3xl">
+                        📎
+                      </div>
+
+                      <div className="mt-3 text-sm font-semibold">
+                        Choose Supporting Document
+                      </div>
+
+                      <div className="mt-1 text-xs text-zinc-600">
+                        Click to select PDF / Image /
+                        Text
+                      </div>
+
+                      <input
+                        type="file"
+                        accept=".pdf,.txt,.jpg,.jpeg,.png,application/pdf,text/plain,image/jpeg,image/png"
+                        disabled={
+                          reviewSaving
+                        }
+                        onChange={(
+                          event
+                        ) =>
+                          handleReviewFile(
+                            event.target
+                              .files?.[0] ||
+                              null
+                          )
+                        }
+                        className="hidden"
+                      />
+                    </label>
+
+                    {/* NEW FILE */}
+
+                    {reviewFile && (
+                      <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-green-500/20 bg-green-500/[0.06] p-4">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-green-300">
+                            {
+                              reviewFile.name
+                            }
+                          </div>
+
+                          <div className="mt-1 text-xs text-zinc-500">
+                            {formatFileSize(
+                              reviewFile.size
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={
+                            reviewSaving
+                          }
+                          onClick={() =>
+                            setReviewFile(
+                              null
+                            )
+                          }
+                          className="rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/5"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+
+                    {/* EXISTING FILE */}
+
+                    {!reviewFile &&
+                      reviewExistingFileName && (
+                        <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.06] p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wider text-blue-400">
+                            Saved Document
+                          </div>
+
+                          <div className="mt-2 break-all text-sm font-semibold">
+                            {
+                              reviewExistingFileName
+                            }
+                          </div>
+
+                          {reviewExistingFileUrl && (
+                            <a
+                              href={
+                                reviewExistingFileUrl
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-3 inline-block text-xs font-semibold text-blue-400 hover:text-blue-300"
+                            >
+                              Open Document ↗
+                            </a>
+                          )}
+
+                          <div className="mt-3 text-xs text-zinc-600">
+                            Upload a new document above
+                            if you want to replace this
+                            file.
+                          </div>
+                        </div>
+                      )}
+                  </div>
+
+                  {/* BULK INFO */}
+
+                  {reviewReleaseIds.length >
+                    1 && (
+                    <div className="mt-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.07] p-4 text-sm leading-6 text-yellow-200">
+                      The same review notes and
+                      supporting document will be saved
+                      to all{" "}
+                      <strong>
+                        {
+                          reviewReleaseIds.length
+                        }
+                      </strong>{" "}
+                      selected releases.
+                    </div>
+                  )}
+
+                  {/* FOOTER */}
+
+                  <div className="mt-7 flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-xs text-zinc-500">
+                      Document will be stored securely
+                      in the release review storage.
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={
+                          closeReviewModal
+                        }
+                        disabled={
+                          reviewSaving
+                        }
+                        className="rounded-xl border border-white/10 px-5 py-3 text-sm hover:bg-white/5 disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={
+                          saveReviewInformation
+                        }
+                        disabled={
+                          reviewSaving ||
+                          (!reviewNote.trim() &&
+                            !reviewFile &&
+                            !reviewExistingFileUrl)
+                        }
+                        className="rounded-xl bg-purple-600 px-6 py-3 text-sm font-semibold hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {reviewSaving
+                          ? "Uploading & Saving..."
+                          : reviewReleaseIds.length >
+                            1
+                          ? `Save to ${reviewReleaseIds.length} Releases`
+                          : "Save Review Info"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* =================================================
           SINGLE DSP MODAL
       ================================================= */}
@@ -2417,7 +3256,33 @@ function formatDate(
   if (!value) {
     return "—";
   }
+function formatFileSize(
+  bytes: number
+) {
+  if (
+    !Number.isFinite(bytes)
+  ) {
+    return "—";
+  }
 
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (
+    bytes <
+    1024 * 1024
+  ) {
+    return `${(
+      bytes / 1024
+    ).toFixed(1)} KB`;
+  }
+
+  return `${(
+    bytes /
+    (1024 * 1024)
+  ).toFixed(1)} MB`;
+}
   const date = new Date(value);
 
   if (
@@ -2432,7 +3297,26 @@ function formatDate(
     "en-IN"
   );
 }
+function formatFileSize(
+  bytes: number
+) {
+  if (!Number.isFinite(bytes)) {
+    return "—";
+  }
 
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(
+    bytes /
+    (1024 * 1024)
+  ).toFixed(1)} MB`;
+}
 /* ======================================================
    STATUS STYLE
 ====================================================== */
