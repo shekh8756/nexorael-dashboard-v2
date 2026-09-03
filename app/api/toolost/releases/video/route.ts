@@ -315,19 +315,33 @@ export async function POST(
     /* ==================================================
        PARTICIPANTS
     ================================================== */
+const participants = [
+  {
+    connect: null,
 
-    const participants = [
-      {
-        name:
-          clean(
-            artist
-          ),
+    apple: {
+      url: null,
+    },
 
-        role: [
-          "primary",
-        ],
-      },
-    ];
+    spotify: {
+      url: null,
+    },
+
+    vevo: {
+      url: null,
+    },
+
+    default: true,
+
+    name: clean(
+      artist
+    ),
+
+    role: [
+      "primary",
+    ],
+  },
+];
 
     /* ==================================================
        WRITERS
@@ -509,7 +523,9 @@ export async function POST(
 
       participants,
 
-      writers,
+writers,
+
+credits: writers,
 
       /*
        * Delivery targets
