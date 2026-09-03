@@ -166,6 +166,21 @@ export default function VideoUploadPage() {
   ] =
     useState("");
 
+    const [
+  artist,
+  setArtist,
+] = useState("");
+
+const [
+  composer,
+  setComposer,
+] = useState("");
+
+const [
+  lyricist,
+  setLyricist,
+] = useState("");
+
   const [
     videoFile,
     setVideoFile,
@@ -620,7 +635,21 @@ export default function VideoUploadPage() {
 
       return;
     }
+if (!clean(artist)) {
+  setErrorMessage(
+    "Artist Name required."
+  );
 
+  return;
+}
+
+if (!clean(composer)) {
+  setErrorMessage(
+    "Composer required."
+  );
+
+  return;
+}
     if (!videoFile) {
       setErrorMessage(
         "Video file select karo."
@@ -738,13 +767,29 @@ export default function VideoUploadPage() {
             },
 
             body:
-              JSON.stringify({
-                releaseId:
-                  clean(
-                    releaseId
-                  ),
+  JSON.stringify({
+    releaseId:
+      clean(
+        releaseId
+      ),
 
-                videoUrl,
+    artist:
+      clean(
+        artist
+      ),
+
+    composer:
+      clean(
+        composer
+      ),
+
+    lyricist:
+      clean(
+        lyricist
+      ) ||
+      undefined,
+
+    videoUrl,
 
                 md5hash,
 
@@ -995,6 +1040,84 @@ export default function VideoUploadPage() {
         }
       >
         <h2>
+        {/* MUSIC CREDITS */}
+
+<section
+  style={card}
+>
+  <h2>
+    2. Music Credits
+  </h2>
+
+  <div
+    style={technicalGrid}
+  >
+    <Field>
+      <label
+        style={labelStyle}
+      >
+        Artist Name *
+      </label>
+
+      <input
+        value={artist}
+        disabled={processing}
+        onChange={(event) =>
+          setArtist(
+            event.target.value
+          )
+        }
+        placeholder="Example: Seema Khan"
+        style={inputStyle}
+      />
+    </Field>
+
+    <Field>
+      <label
+        style={labelStyle}
+      >
+        Composer *
+      </label>
+
+      <input
+        value={composer}
+        disabled={processing}
+        onChange={(event) =>
+          setComposer(
+            event.target.value
+          )
+        }
+        placeholder="Example: MD Sahid Miya"
+        style={inputStyle}
+      />
+    </Field>
+
+    <Field>
+      <label
+        style={labelStyle}
+      >
+        Lyricist
+      </label>
+
+      <input
+        value={lyricist}
+        disabled={processing}
+        onChange={(event) =>
+          setLyricist(
+            event.target.value
+          )
+        }
+        placeholder="Example: MD Sahid Miya"
+        style={inputStyle}
+      />
+    </Field>
+  </div>
+
+  <p style={helper}>
+    Composer aur Lyricist same person ho sakte hain.
+    System duplicate writer ko automatically combine karega.
+  </p>
+</section>
           2. Video File
         </h2>
 

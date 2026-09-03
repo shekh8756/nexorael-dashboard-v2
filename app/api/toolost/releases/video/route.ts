@@ -14,6 +14,107 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/* ======================================================
+   HELPERS
+====================================================== */
+
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function buildWriters(
+  composer?: string,
+  lyricist?: string
+) {
+  const writerMap = new Map<
+    string,
+    {
+      name: string;
+      role: string[];
+    }
+  >();
+
+  function addWriter(
+    name: string,
+    role: string
+  ) {
+    const cleanedName =
+      clean(name);
+
+    if (!cleanedName) {
+      return;
+    }
+
+    const key =
+      cleanedName.toLowerCase();
+
+    const existing =
+      writerMap.get(key);
+
+    if (existing) {
+      if (
+        !existing.role.includes(
+          role
+        )
+      ) {
+        existing.role.push(
+          role
+        );
+      }
+
+      return;
+    }
+
+    writerMap.set(
+      key,
+      {
+        name:
+          cleanedName,
+
+        role: [
+          role,
+        ],
+      }
+    );
+  }
+
+  /*
+   * Too Lost official writer roles:
+   *
+   * Composer:
+   * instrumentalist
+   *
+   * Lyricist:
+   * lyricist
+   */
+
+  if (
+    clean(composer)
+  ) {
+    addWriter(
+      composer!,
+      "instrumentalist"
+    );
+  }
+
+  if (
+    clean(lyricist)
+  ) {
+    addWriter(
+      lyricist!,
+      "lyricist"
+    );
+  }
+
+  return Array.from(
+    writerMap.values()
+  );
+}
+
+/* ======================================================
+   POST
+====================================================== */
+
 export async function POST(
   request: NextRequest
 ) {
@@ -27,12 +128,25 @@ export async function POST(
     const {
       releaseId,
 
+      /*
+       * Music credits
+       */
+      artist,
+      composer,
+      lyricist,
+
+      /*
+       * Video
+       */
       videoUrl,
       md5hash,
 
       videoType,
       ageRestriction,
 
+      /*
+       * Delivery
+       */
       appleMusic,
       boomplay,
       spotify,
@@ -40,6 +154,9 @@ export async function POST(
       vevo,
       youtubeVideo,
 
+      /*
+       * Technical metadata
+       */
       audioChannels,
       audioCodec,
       audioSampleRate,
@@ -49,12 +166,23 @@ export async function POST(
       videoHeight,
       videoWidth,
 
+      /*
+       * Cover/reference
+       */
       isCoverVersion,
       referenceUpc,
       referenceIsrc,
     } = body;
 
-    if (!releaseId) {
+    /* ==================================================
+       REQUIRED FIELDS
+    ================================================== */
+
+    if (
+      !clean(
+        releaseId
+      )
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -67,7 +195,28 @@ export async function POST(
       );
     }
 
-    if (!videoUrl) {
+    if (
+      !clean(
+        artist
+      )
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Artist is required for music videos.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      !clean(
+        videoUrl
+      )
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -80,7 +229,11 @@ export async function POST(
       );
     }
 
-    if (!md5hash) {
+    if (
+      !clean(
+        md5hash
+      )
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -93,6 +246,10 @@ export async function POST(
       );
     }
 
+    /* ==================================================
+       VIDEO TYPE
+    ================================================== */
+
     const allowedVideoTypes =
       [
         "official_music_video",
@@ -100,7 +257,9 @@ export async function POST(
       ];
 
     const finalVideoType =
-      videoType ||
+      clean(
+        videoType
+      ) ||
       "official_music_video";
 
     if (
@@ -120,6 +279,10 @@ export async function POST(
       );
     }
 
+    /* ==================================================
+       AGE RESTRICTION
+    ================================================== */
+
     const allowedAgeRestrictions =
       [
         "all_ages",
@@ -127,7 +290,9 @@ export async function POST(
       ];
 
     const finalAgeRestriction =
-      ageRestriction ||
+      clean(
+        ageRestriction
+      ) ||
       "all_ages";
 
     if (
@@ -147,16 +312,173 @@ export async function POST(
       );
     }
 
+    /* ==================================================
+       PARTICIPANTS
+    ================================================== */
+
+    const participants = [
+      {
+        name:
+          clean(
+            artist
+          ),
+
+        role: [
+          "primary",
+        ],
+      },
+    ];
+
+    /* ==================================================
+       WRITERS
+    ================================================== */
+
+    const writers =
+      buildWriters(
+        composer,
+        lyricist
+      );
+
+    if (
+      writers.length ===
+      0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "At least one Composer or Lyricist is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /* ==================================================
+       TECHNICAL VALIDATION
+    ================================================== */
+
+    const finalAudioChannels =
+      Number(
+        audioChannels
+      );
+
+    const finalAudioSampleRate =
+      Number(
+        audioSampleRate
+      );
+
+    const finalVideoDuration =
+      Number(
+        videoDuration
+      );
+
+    const finalVideoHeight =
+      Number(
+        videoHeight
+      );
+
+    const finalVideoWidth =
+      Number(
+        videoWidth
+      );
+
+    if (
+      !Number.isFinite(
+        finalAudioChannels
+      ) ||
+      finalAudioChannels <
+        1
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid audioChannels.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      !Number.isFinite(
+        finalAudioSampleRate
+      ) ||
+      finalAudioSampleRate <
+        1
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid audioSampleRate.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      !Number.isFinite(
+        finalVideoDuration
+      ) ||
+      finalVideoDuration <=
+        0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid videoDuration.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      !Number.isFinite(
+        finalVideoWidth
+      ) ||
+      finalVideoWidth <
+        1 ||
+      !Number.isFinite(
+        finalVideoHeight
+      ) ||
+      finalVideoHeight <
+        1
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Invalid video dimensions.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /* ==================================================
+       VIDEO PAYLOAD
+    ================================================== */
+
     const videoPayload = {
       videoUrl:
-        String(
+        clean(
           videoUrl
-        ).trim(),
+        ),
 
       md5hash:
-        String(
+        clean(
           md5hash
-        ).trim(),
+        ),
 
       videoType:
         finalVideoType,
@@ -170,18 +492,28 @@ export async function POST(
         ),
 
       referenceUpc:
-        referenceUpc
-          ? String(
-              referenceUpc
-            ).trim()
-          : null,
+        clean(
+          referenceUpc
+        ) ||
+        null,
 
       referenceIsrc:
-        referenceIsrc
-          ? String(
-              referenceIsrc
-            ).trim()
-          : null,
+        clean(
+          referenceIsrc
+        ) ||
+        null,
+
+      /*
+       * Required music credits
+       */
+
+      participants,
+
+      writers,
+
+      /*
+       * Delivery targets
+       */
 
       delivery: {
         appleMusic:
@@ -215,57 +547,46 @@ export async function POST(
           ),
       },
 
+      /*
+       * Technical media metadata
+       */
+
       metadata: {
         audio: {
           channels:
-            Number(
-              audioChannels ||
-                2
-            ),
+            finalAudioChannels,
 
           codec:
-            String(
-              audioCodec ||
-                "aac"
-            ),
+            clean(
+              audioCodec
+            ) ||
+            "aac",
 
           sample_rate:
-            Number(
-              audioSampleRate ||
-                48000
-            ),
+            finalAudioSampleRate,
         },
 
         video: {
           codec:
-            String(
-              videoCodec ||
-                "h264"
-            ),
+            clean(
+              videoCodec
+            ) ||
+            "h264",
 
           duration:
-            Number(
-              videoDuration ||
-                0
-            ),
+            finalVideoDuration,
 
           height:
-            Number(
-              videoHeight ||
-                1080
-            ),
+            finalVideoHeight,
 
           width:
-            Number(
-              videoWidth ||
-                1920
-            ),
+            finalVideoWidth,
         },
       },
     };
 
     console.log(
-      "Too Lost video payload:",
+      "Too Lost Music Video payload:",
       JSON.stringify(
         videoPayload,
         null,
@@ -273,11 +594,17 @@ export async function POST(
       )
     );
 
+    /* ==================================================
+       TOO LOST
+    ================================================== */
+
     const result =
       await tooLostApi(
         accessToken,
 
-        `/releases/${releaseId}/video`,
+        `/releases/${clean(
+          releaseId
+        )}/video`,
 
         {
           method:
@@ -300,16 +627,22 @@ export async function POST(
       );
 
     console.log(
-      "Too Lost video status:",
+      "Too Lost Music Video status:",
       result.response.status
     );
 
     console.log(
-      "Too Lost video response:",
+      "Too Lost Music Video response:",
       JSON.stringify(
-        result.data
+        result.data,
+        null,
+        2
       )
     );
+
+    /* ==================================================
+       ERROR RESPONSE
+    ================================================== */
 
     if (
       !result.response.ok
@@ -327,10 +660,15 @@ export async function POST(
           error:
             errorData?.message ||
             errorData?.error ||
-            "Too Lost rejected video metadata.",
+            "Too Lost rejected music video metadata.",
 
           tooLostResponse:
             result.data,
+
+          sent: {
+            participants,
+            writers,
+          },
         },
 
         {
@@ -340,10 +678,21 @@ export async function POST(
       );
     }
 
+    /* ==================================================
+       SUCCESS
+    ================================================== */
+
     return NextResponse.json({
       success: true,
 
-      releaseId,
+      releaseId:
+        clean(
+          releaseId
+        ),
+
+      participants,
+
+      writers,
 
       video:
         videoPayload,
@@ -351,9 +700,11 @@ export async function POST(
       data:
         result.data,
     });
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
-      "Too Lost video route error:",
+      "Too Lost Music Video route error:",
       error
     );
 
@@ -364,7 +715,7 @@ export async function POST(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to update Too Lost video.",
+            : "Failed to update Too Lost music video.",
       },
 
       {
